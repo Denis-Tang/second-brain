@@ -1,0 +1,19 @@
+# LaTeX 构建中间产物
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.bbl
+*.blg
+*.nav
+*.snm
+*.vrb
+
+# Microsoft Office / Windows
+~$*
+desktop.ini
+Thumbs.db
+.DS_Store
