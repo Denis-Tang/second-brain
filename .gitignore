@@ -1,19 +1,30 @@
-# LaTeX 构建中间产物
-*.aux
-*.log
-*.out
-*.toc
-*.synctex.gz
-*.fls
-*.fdb_latexmk
-*.bbl
-*.blg
-*.nav
-*.snm
-*.vrb
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.egg-info/
+build/
+dist/
+*.spec
+.env
+.env.*
+!.env.example
 
-# Microsoft Office / Windows
-~$*
-desktop.ini
-Thumbs.db
-.DS_Store
+# Private vault, local application state and host configuration.
+/example-vault/
+/会话总结/
+/项目/
+/知识/
+/技能/
+/资料/
+/.obsidian/
+/.codex/
+/.claude/
+/.ohdsh/
+/.dsh/
+/SharedBrain/
+/settings.json
+/errors/
+*.sqlite
+*.sqlite3
+*.db

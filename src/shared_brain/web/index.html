@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shared Brain</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">▧</span><div>Shared Brain<small>本地共享记忆</small></div></div>
+    <nav aria-label="主导航">
+      <button class="nav-item active" data-page="overview"><span>◫</span>总观</button>
+      <button class="nav-item" data-page="settings"><span>⚙</span>设置</button>
+    </nav>
+    <div class="sidebar-bottom"><span class="status-dot" id="ready-dot"></span><span id="ready-label">正在连接</span><p>关闭窗口后保留在托盘<br>右键托盘图标可退出</p></div>
+  </aside>
+  <main>
+    <header><div><p class="eyebrow">SHARED BRAIN</p><h1 id="page-title">记忆，从这里开始</h1><p id="page-description" class="muted">让不同工具共享同一份本地知识。</p></div><span class="local-badge">● 本地工作区</span></header>
+
+    <section id="overview" class="page active" aria-label="总观">
+      <div class="growth-toolbar"><h2>知识库的积累</h2><div class="period-picker" aria-label="历史时间范围">
+        <button data-period="24h" aria-pressed="true">24 小时</button><button data-period="7d" aria-pressed="false">7 天</button><button data-period="30d" aria-pressed="false">30 天</button>
+      </div></div>
+      <div class="stat-grid" id="growth-cards" aria-live="polite">
+        <div class="empty-state">正在读取历史记录…</div>
+      </div>
+      <p class="hint growth-note">知识条目包含草稿；token 是已保存正文的粗略估算，并非 API 消耗。曲线只展示本机开始记录后的真实历史。</p>
+    </section>
+
+    <section id="settings" class="page" aria-label="设置">
+      <article class="card">
+        <div class="card-heading"><div><h2>选择你的 Vault</h2><p class="muted">选择一个干净的 Obsidian 仓库位置并保存，再复制内置提示词交给 Agent 创建目录和完成接入。</p></div></div>
+        <form id="initialize-form">
+          <label for="vault-path">Vault 文件夹</label>
+          <div class="input-row"><input id="vault-path" required placeholder="选择用于保存共享记忆的文件夹"><button type="button" id="choose-vault" class="button secondary">选择文件夹</button></div>
+          <div class="action-row"><button class="button primary" id="initialize-button" type="submit">保存仓库路径</button><button class="button secondary" type="button" data-copy-vault disabled>复制 Vault 地址</button><button class="button secondary" type="button" data-copy-agent disabled>复制内置提示词</button></div>
+        </form>
+      </article>
+      <form id="settings-form">
+        <article class="card">
+          <div class="card-heading"><div><h2>模型连接</h2><p class="muted">使用兼容 OpenAI 的接口完成记忆整理。</p></div><span class="tag" id="key-status">密钥未配置</span></div>
+          <label for="base-url">API 地址</label><input id="base-url" type="url" required placeholder="兼容 OpenAI 的 API 地址">
+          <label for="model">模型名称</label><input id="model" required placeholder="模型 ID">
+          <label for="api-key">API 密钥</label><input id="api-key" type="password" autocomplete="new-password" placeholder="留空保留已有密钥">
+          <p class="hint">密钥只在本机保存，不会回显。填写新密钥后点击保存即可替换。</p>
+          <label class="checkbox-row"><input id="clear-key" type="checkbox"><span>清除已保存的密钥</span></label>
+        </article>
+        <article class="card">
+          <div class="card-heading"><div><h2>夜间自动维护</h2><p class="muted">应用运行时，每天按本机时间整理待处理内容。</p></div><label class="switch"><input id="maintenance-enabled" type="checkbox" aria-label="启用自动维护"><span></span></label></div>
+          <div class="time-row"><label for="maintenance-time">每天执行时间</label><input id="maintenance-time" type="time" required><span class="muted">本机时间</span></div>
+          <p id="budget-status" class="hint"></p>
+          <p class="hint">官方 DeepSeek V4.1 Flash（deepseek-flash），非思考模式。每月最多 ¥10；每日最多 3 批，累计输入 30,000 / 输出 4,000 tokens。预算不足保留积压；含用量未知请求的预留费用。</p>
+          <p class="hint">默认关闭，默认时间为 02:00。关闭窗口后仍在托盘运行；退出应用后停止维护；下次启动达到维护时点后补处理积压。</p>
+        </article>
+        <div class="action-row"><button class="button primary" type="submit">保存设置</button><button class="button secondary" type="button" id="test-button">测试已保存的连接</button></div>
+      </form>
+    </section>
+
+  </main>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
