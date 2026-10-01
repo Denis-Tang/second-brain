@@ -1,14 +1,15 @@
-:root { color-scheme: light; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; color: #243047; background: #f5f7fa; font-size: 14px; }
+@font-face { font-family: "Noto Serif"; src: url("noto-serif-latin.woff2") format("woff2"); font-weight: 100 900; }
+:root { color-scheme: light; font-family: "Noto Serif", "YouYuan", "幼圆", serif; color: #243047; background: #f5f7fa; font-size: 14px; }
 * { box-sizing: border-box; }
 body { margin: 0; display: flex; min-height: 100vh; }
 button, input { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .48; }
-button:focus-visible, input:focus-visible { outline: 3px solid #b1c2ff; outline-offset: 3px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid #b1c2ff; outline-offset: 3px; }
 .sidebar { position: fixed; inset: 0 auto 0 0; width: 218px; padding: 30px 18px 22px; background: #fff; border-right: 1px solid #e6eaf1; display: flex; flex-direction: column; }
 .brand { display: flex; align-items: center; gap: 11px; padding: 0 8px; font-size: 17px; font-weight: 700; letter-spacing: -.5px; }
 .brand small { display: block; margin-top: 5px; color: #8a93a5; font-size: 11px; font-weight: 400; letter-spacing: 1px; }
-.brand-mark { display: grid; place-items: center; background: #345de3; color: #fff; width: 39px; height: 39px; border-radius: 12px; font-size: 30px; font-weight: 400; }
+.brand-mark { display: block; width: 39px; height: 39px; flex-shrink: 0; }
 nav { display: grid; gap: 8px; margin-top: 47px; }
 .nav-item { text-align: left; background: none; border: 0; border-radius: 10px; padding: 13px 15px; color: #687489; display: flex; align-items: center; gap: 13px; }
 .nav-item span { font-size: 20px; width: 23px; line-height: 22px; text-align: center; }
@@ -23,6 +24,7 @@ header { display: flex; justify-content: space-between; align-items: flex-start;
 .eyebrow { color: #91a0b7; letter-spacing: 2px; font-size: 10px; font-weight: 600; margin: 0 0 10px; }
 h1 { margin: 0 0 9px; font-size: 27px; letter-spacing: -.6px; font-weight: 650; }
 h2 { font-size: 15px; font-weight: 650; margin: 0 0 7px; }
+h1, h2, .stat-card > span { font-family: "Noto Serif", "SimHei", "黑体", sans-serif; }
 p { line-height: 1.65; }
 .muted { color: #8490a3; font-size: 12px; margin: 0; }
 .local-badge { margin-top: 4px; color: #69907c; background: #edf5ef; border: 1px solid #e0ece2; border-radius: 20px; font-size: 10px; padding: 7px 10px; white-space: nowrap; }
@@ -39,7 +41,7 @@ p { line-height: 1.65; }
 .period-picker button { border: 0; padding: 7px 11px; border-radius: 6px; color: #8390a6; background: none; font-size: 11px; }
 .period-picker button[aria-pressed="true"] { color: #345de3; background: #fff; box-shadow: 0 1px 4px #d9e2f2; }
 .growth-chart { display: block; width: 100%; height: 100px; margin-top: 13px; color: var(--chart-color); }
-.chart-tick { fill: #a0a9b8; font: 11px "Segoe UI", sans-serif; }
+.chart-tick { fill: #a0a9b8; font-size: 11px; }
 .chart-axis { display: flex; justify-content: space-between; gap: 8px; color: #a0a9b8; font-size: 9px; white-space: nowrap; }
 .chart-empty { display: grid; place-items: center; height: 124px; margin: 0; color: #a0a9b8; font-size: 11px; }
 .growth-note.hint { margin: -7px 0 23px; }
@@ -48,10 +50,19 @@ p { line-height: 1.65; }
 .tag { flex-shrink: 0; font-size: 10px; padding: 5px 9px; border-radius: 6px; color: #8290a7; background: #f1f4f9; }
 .tag.configured { color: #368765; background: #edf7f1; }
 label { display: block; font-size: 12px; font-weight: 500; color: #6c778c; margin: 18px 0 8px; }
-input { width: 100%; border: 1px solid #dfe5ef; border-radius: 7px; background: #fcfdff; padding: 11px 12px; color: #344157; min-width: 0; }
-input::placeholder { color: #a7afbd; font-size: 12px; }
-input:focus { outline: 0; border-color: #6e8ced; box-shadow: 0 0 0 3px #eef2ff; }
+input, textarea { width: 100%; border: 1px solid #dfe5ef; border-radius: 7px; background: #fcfdff; padding: 11px 12px; color: #344157; min-width: 0; }
+input::placeholder, textarea::placeholder { color: #a7afbd; font-size: 12px; }
+input:focus, textarea:focus { outline: 0; border-color: #6e8ced; box-shadow: 0 0 0 3px #eef2ff; }
+textarea { font: inherit; line-height: 1.7; resize: vertical; }
+#global-prompt-form { margin-top: 20px; }
 .input-row { display: flex; gap: 9px; }
+.project-path-row { display: flex; align-items: center; gap: 9px; margin: 12px 0; }
+.project-path-row span { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+.project-directory { overflow-wrap: anywhere; }
+.project-rules { margin: 0 0 20px; }
+#project-editor, #delete-project-dialog { width: min(680px, calc(100vw - 48px)); max-height: calc(100vh - 48px); padding: 26px; border: 1px solid #e6eaf1; border-radius: 13px; color: #344157; }
+#project-editor::backdrop, #delete-project-dialog::backdrop { background: #24334c66; }
+#delete-project-dialog { width: min(460px, calc(100vw - 48px)); overflow-wrap: anywhere; }
 .button { border: 1px solid transparent; border-radius: 7px; padding: 10px 15px; font-size: 12px; font-weight: 500; white-space: nowrap; min-height: 37px; }
 .primary { background: #345de3; color: #fff; }
 .primary:hover:not(:disabled) { background: #2b4dbe; }

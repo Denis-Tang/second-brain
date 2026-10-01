@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import ctypes
+import os
 import threading
 
 from .service import BrainService
@@ -34,6 +36,9 @@ class DesktopAPI:
     def configure(self, values, api_key=None):
         return self._call(self._service.configure, values, api_key)
 
+    def save_global_prompt(self, text):
+        return self._call(self._service.save_global_prompt, text)
+
     def test_connection(self):
         return self._call(self._service.test_connection)
 
@@ -42,6 +47,15 @@ class DesktopAPI:
 
     def overview(self, period="24h"):
         return self._call(self._service.overview, period)
+
+    def projects(self):
+        return self._call(self._service.projects)
+
+    def configure_project(self, name, paths, project_id=""):
+        return self._call(self._service.configure_project, name, paths, project_id)
+
+    def delete_project(self, project_id):
+        return self._call(self._service.delete_project, project_id)
 
     def choose_vault(self):
         import webview
@@ -70,9 +84,40 @@ def _maintenance_loop(api: DesktopAPI, stop: threading.Event):
 
 
 def run(home: Path | None = None):
+    if os.name != "nt":
+        return _run_desktop(home)
+
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel.CreateMutexW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel.CreateMutexW(None, False, "Local\\SharedBrain.Desktop")
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    already_running = ctypes.get_last_error() == 183
+    try:
+        user = ctypes.WinDLL("user32")
+        user.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        user.FindWindowW.restype = wintypes.HWND
+        user.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        user.SetForegroundWindow.argtypes = [wintypes.HWND]
+        window = user.FindWindowW(None, "Shared Brain")
+        if already_running or window:
+            if window:
+                user.ShowWindow(window, 9)  # Restore the existing tray window.
+                user.SetForegroundWindow(window)
+            return
+        return _run_desktop(home)
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def _run_desktop(home: Path | None = None):
     import pystray
     import webview
-    from PIL import Image, ImageDraw
+    from PIL import Image
 
     service = BrainService(home)
     api = DesktopAPI(service)
@@ -104,11 +149,9 @@ def run(home: Path | None = None):
         icon.stop()
         window.destroy()
 
-    icon_image = Image.new("RGBA", (64, 64))
-    draw = ImageDraw.Draw(icon_image)
-    draw.rounded_rectangle((2, 2, 62, 62), radius=16, fill="#345de3")
-    draw.rounded_rectangle((14, 14, 37, 37), radius=6, outline="white", width=4)
-    draw.rounded_rectangle((27, 27, 50, 50), radius=6, fill="white")
+    assets = Path(__file__).parent / "web"
+    with Image.open(assets / "icon.png") as source:
+        icon_image = source.resize((64, 64), Image.Resampling.LANCZOS)
     tray = pystray.Icon(
         "shared-brain",
         icon_image,
@@ -124,7 +167,7 @@ def run(home: Path | None = None):
     worker.start()
     tray_thread.start()
     try:
-        webview.start()
+        webview.start(icon=str(assets / "icon.ico"))
     finally:
         stop.set()
         tray.stop()

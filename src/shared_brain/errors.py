@@ -2,7 +2,7 @@
 import json
 import re
 from urllib.parse import urlsplit, urlunsplit
-from .vault import fingerprint, now
+from .vault import fingerprint, now, search_terms
 
 
 def scrub(value):
@@ -100,7 +100,7 @@ class ErrorReports:
         self.path(session_id).write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         self.vault.refresh()
         with self.vault.connect() as con:
-            notes = list(con.execute("SELECT path,metadata FROM notes WHERE kind IN ('memory','skill')"))
+            notes = list(con.execute("SELECT path,metadata FROM notes WHERE kind IN ('memory','skill') AND project=?", (entry["project"],)))
         for row in notes:
             metadata = json.loads(row["metadata"])
             if str(self.path(session_id)) in metadata.get("sources", []):
@@ -109,12 +109,15 @@ class ErrorReports:
         return {"active": entry["active"], "path": str(self.path(session_id)), "comparable": comparable}
 
     def search(self, query, project="", object_target="", method="", environment=None, high_only=False):
-        terms = re.findall(r"\w+", query.casefold())
+        terms = search_terms(query)
+        minimum = 2 if len(terms) >= 3 and re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", query) else 1
         results = []
         for path in self.root.glob("*.json"):
             report = json.loads(path.read_text(encoding="utf-8"))
             for e in report["errors"]:
-                if e["project"] not in {"", project} or (high_only and (e.get("impact") != "high" or not e["active"])):
+                if project not in {"", "all"} and e["project"] != ("" if project == "independent" else project):
+                    continue
+                if high_only and (e.get("impact") != "high" or not e["active"]):
                     continue
                 if object_target and target(object_target) != e["target"] or method and method != e["method"]:
                     continue
@@ -123,10 +126,10 @@ class ErrorReports:
                     continue
                 text = json.dumps(e, ensure_ascii=False)
                 score = sum(t in text.casefold() for t in terms)
-                if not score and not object_target:
+                if score < minimum and not object_target:
                     continue
                 results.append({"path": str(path), "session_id": report["session_id"], "error_id": e["id"],
-                                "kind": "error", "target": e["target"], "method": e["method"], "environment": conditions,
+                                "kind": "error", "project": e["project"], "target": e["target"], "method": e["method"], "environment": conditions,
                                 "active": e["active"], "at": e["last_seen"], "text": e["symptom"],
                                 "workaround": e.get("workaround", ""), "latest_success": (e.get("successes") or [None])[-1], "score": score})
         return sorted(results, key=lambda r: (r["score"], r["at"]), reverse=True)
@@ -134,10 +137,17 @@ class ErrorReports:
     def pending(self):
         result = []
         for path in self.root.glob("*.json"):
-            body = path.read_text(encoding="utf-8")
-            report = json.loads(body)
-            digest = fingerprint(body)
-            if self.vault.state("processed-error:" + path.name) != digest:
-                result.append({"path": str(path), "hash": digest, "project": report["project"], "kind": "error",
-                               "title": "错误报告", "body": body})
+            report = json.loads(path.read_text(encoding="utf-8"))
+            groups = {}
+            for entry in report["errors"]:
+                groups.setdefault(entry["project"], []).append(entry)
+            for project, entries in groups.items():
+                body = json.dumps({"session_id": report["session_id"], "errors": entries}, ensure_ascii=False)
+                digest = fingerprint(body)
+                identity = path.name + ":" + project
+                processed_key = "processed-error:" + identity
+                if self.vault.state(processed_key) != digest:
+                    result.append({"path": str(path), "hash": digest, "project": project, "kind": "error",
+                                   "title": "错误报告", "body": body, "processed_key": processed_key,
+                                   "offset_key": "offset:error:" + identity})
         return result

@@ -14,8 +14,7 @@ import keyring
 def default_home() -> Path:
     if os.environ.get("SHARED_BRAIN_HOME"):
         return Path(os.environ["SHARED_BRAIN_HOME"]).expanduser()
-    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local" / "share"))
-    return base / "SharedBrain"
+    return Path.home() / ".shared-brain"
 
 
 @dataclass
@@ -26,13 +25,14 @@ class Settings:
     maintenance_enabled: bool = False
     maintenance_time: str = "02:00"
     key_configured: bool = False
+    credential_account: str = ""
 
 
 class SettingsStore:
     def __init__(self, home: Path | None = None):
         self.home = Path(home) if home else default_home()
         self.path = self.home / "settings.json"
-        self.account = hashlib.sha256(str(self.home.resolve()).encode()).hexdigest()[:20]
+        self.account = self.load().credential_account or hashlib.sha256(str(self.home.resolve()).encode()).hexdigest()[:20]
 
     def load(self) -> Settings:
         if not self.path.exists():
@@ -43,7 +43,7 @@ class SettingsStore:
 
     def update(self, values: dict, api_key: str | None = None) -> Settings:
         current = asdict(self.load())
-        allowed = set(current) - {"key_configured"}
+        allowed = set(current) - {"key_configured", "credential_account"}
         if set(values) - allowed:
             raise ValueError("包含不支持的设置项")
         current.update(values)
@@ -56,8 +56,13 @@ class SettingsStore:
             raise ValueError("维护开关须为布尔值")
         if not isinstance(current["model"], str) or len(current["model"]) > 200:
             raise ValueError("模型名称须为不超过 200 字符的文本")
-        if "vault_path" in values and values["vault_path"]:
-            current["vault_path"] = str(Path(values["vault_path"]).expanduser().resolve())
+        if "vault_path" in values:
+            if not isinstance(values["vault_path"], str) or not values["vault_path"].strip():
+                raise ValueError("请选择知识库目录")
+            path = Path(values["vault_path"]).expanduser().resolve()
+            if path.exists() and not path.is_dir():
+                raise ValueError("请选择文件夹路径")
+            current["vault_path"] = str(path)
         if api_key is not None:
             if api_key.strip():
                 keyring.set_password("shared-brain", self.account, api_key.strip())

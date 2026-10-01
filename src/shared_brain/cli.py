@@ -18,7 +18,7 @@ def main(argv=None):
     for name, description in (
         ("desktop", "打开桌面界面（默认）"),
         ("mcp", "启动 stdio MCP 服务"),
-        ("init", "保存 Obsidian Vault 路径，目录由 Agent 创建"),
+        ("init", "保存 Obsidian Vault 路径并创建基础目录"),
         ("maintain", "执行一次待处理记忆维护"),
         ("config-mcp", "输出 MCP 客户端连接配置"),
         ("hook", "读取宿主适配后的单个 JSON Hook 事件"),

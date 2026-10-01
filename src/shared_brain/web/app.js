@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const pages = {
-  overview: ["第二大脑总观", "查看会话总结、知识与正文 token 的积累。"],
+  projects: ["项目配置", "统一管理项目与工作目录，未配置的路径自动作为独立会话。"],
+  overview: ["第二大脑总观", "查看会话总结、知识与技能、正文 token 的积累，编辑全局提示词。"],
   settings: ["工作区与夜间维护", "选择 Vault，配置模型连接与每天的维护时间。"],
 };
 let toastTimer;
@@ -37,7 +38,7 @@ async function refresh(fillForms = false) {
   $("budget-status").textContent = budget ? `本月已用/预留 ¥${budget.used_or_reserved_cny.toFixed(4)} / ¥${budget.monthly_limit_cny} · 剩余 ¥${budget.remaining_cny.toFixed(4)} · 今日 ${budget.today_calls}/3 批` : "";
   vaultReady = state.ready;
   vaultPath = settings.vault_path || "";
-  $("ready-label").textContent = state.ready ? "Vault 已就绪" : (vaultPath ? "等待 Agent 配置" : "等待选择仓库");
+  $("ready-label").textContent = state.ready ? "Vault 已就绪" : (vaultPath ? "等待保存设置" : "等待选择仓库");
   $("ready-dot").classList.toggle("ready", state.ready);
   document.querySelectorAll("[data-copy-vault], [data-copy-agent]").forEach((button) => {
     button.disabled = !vaultPath || button.dataset.busy === "true";
@@ -50,11 +51,21 @@ async function refresh(fillForms = false) {
     $("model").value = settings.model;
     $("maintenance-enabled").checked = settings.maintenance_enabled;
     $("maintenance-time").value = settings.maintenance_time;
+    $("global-prompt").value = state.global_prompt || "";
   }
+  updatePromptAvailability();
   activatePage(fillForms && !state.ready ? "settings" : activePage);
   if (activePage === "overview") await refreshOverview();
+  if (activePage === "projects") await refreshProjects();
   if (state.background_error) toast(state.background_error, true);
   return state;
+}
+
+function updatePromptAvailability() {
+  const ready = vaultReady && $("vault-path").value.trim() === vaultPath;
+  $("global-prompt").disabled = !ready;
+  $("save-global-prompt").disabled = !ready;
+  $("prompt-vault").textContent = ready ? `当前知识库：${vaultPath}` : "请先保存知识库设置。";
 }
 
 function activatePage(page) {
@@ -62,7 +73,7 @@ function activatePage(page) {
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.page === page));
   document.querySelectorAll(".page").forEach((item) => item.classList.toggle("active", item.id === page));
   [$("page-title").textContent, $("page-description").textContent] = page === "settings" && !vaultReady
-    ? ["首次设置", "选择仓库路径，再把内置提示词交给 Agent 完成配置。"] : pages[page];
+    ? ["首次设置", "保存知识库路径后，在项目配置中管理工作目录，再接入 Agent。"] : pages[page];
 }
 
 function svgElement(tag, attributes) {
@@ -140,6 +151,7 @@ document.querySelectorAll("[data-page]").forEach((button) => {
     const page = button.dataset.page;
     activatePage(page);
     if (page === "overview") await refreshOverview();
+    if (page === "projects") await refreshProjects();
 
   }));
 });
@@ -155,16 +167,10 @@ document.querySelectorAll("[data-period]").forEach((button) => {
 $("choose-vault").addEventListener("click", (event) => action(event.currentTarget, async () => {
   const result = await call("choose_vault");
   if (result.path) $("vault-path").value = result.path;
+  updatePromptAvailability();
 }));
 
-$("initialize-form").addEventListener("submit", (event) => {
-  event.preventDefault();
-  action(event.submitter, async () => {
-    const result = await call("initialize", $("vault-path").value.trim());
-    await refresh(true);
-    toast(result.message);
-  });
-});
+$("vault-path").addEventListener("input", updatePromptAvailability);
 
 document.querySelectorAll("[data-copy-vault]").forEach((button) => {
   button.addEventListener("click", () => action(button, async () => {
@@ -182,6 +188,7 @@ $("settings-form").addEventListener("submit", (event) => {
   event.preventDefault();
   action(event.submitter, async () => {
     const values = {
+      vault_path: $("vault-path").value.trim(),
       base_url: $("base-url").value.trim(),
       model: $("model").value.trim(),
       maintenance_enabled: $("maintenance-enabled").checked,
@@ -211,4 +218,133 @@ document.querySelectorAll("[data-copy-agent]").forEach((button) => {
 window.addEventListener("pywebviewready", () => {
   action(null, () => refresh(true));
   setInterval(() => action(null, () => refresh()), 30000);
+});
+
+$("global-prompt-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  action(event.submitter, async () => {
+    const result = await call("save_global_prompt", $("global-prompt").value);
+    $("global-prompt").value = result.global_prompt;
+    toast(result.message);
+  });
+});
+
+let editingProject = "";
+let projectPaths = [];
+
+function projectButton(label, work) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "button secondary";
+  button.textContent = label;
+  button.addEventListener("click", () => action(button, work));
+  return button;
+}
+
+async function copyProjectText(text) {
+  await navigator.clipboard.writeText(text);
+  toast("已复制");
+}
+
+function renderProjectPaths() {
+  $("project-paths").replaceChildren();
+  projectPaths.forEach((path, index) => {
+    const row = document.createElement("div");
+    row.className = "project-path-row";
+    const label = document.createElement("span");
+    label.textContent = path;
+    row.append(label, projectButton("复制路径", () => copyProjectText(path)), projectButton("移除", () => {
+      projectPaths.splice(index, 1);
+      renderProjectPaths();
+    }));
+    $("project-paths").append(row);
+  });
+}
+
+function editProject(project) {
+  editingProject = project?.project_id || "";
+  projectPaths = [...(project?.paths || [])];
+  $("project-name").value = project?.name || "";
+  $("project-form-title").textContent = project ? `编辑项目：${project.name}` : "新增项目";
+  $("project-form-description").textContent = project ? "仅修改此项目，其他项目不受影响。" : "创建一个独立项目，可关联多个工作目录。";
+  $("save-project").textContent = project ? "保存修改" : "创建项目";
+  renderProjectPaths();
+}
+
+async function refreshProjects() {
+  const result = vaultReady ? await call("projects") : { projects: [] };
+  $("project-count").textContent = `全部项目（${result.projects.length}）`;
+  $("new-project").disabled = !vaultReady;
+  $("project-list").replaceChildren();
+  if (!result.projects.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = vaultReady ? "还没有项目。点击右上角“新增项目”，可依次添加多个项目。" : "请先在设置中保存知识库路径。";
+    $("project-list").append(empty);
+  }
+  for (const project of result.projects) {
+    const card = document.createElement("article");
+    card.className = "card";
+    const title = document.createElement("h2");
+    title.textContent = project.name;
+    const directory = document.createElement("p");
+    directory.className = "hint project-directory";
+    directory.textContent = `项目资料：${project.directory}`;
+    const actions = document.createElement("div");
+    actions.className = "action-row";
+    actions.append(projectButton("编辑", () => {
+      editProject(project);
+      $("project-editor").showModal();
+    }), projectButton("复制名称", () => copyProjectText(project.name)),
+    projectButton("删除项目", () => {
+      $("delete-project-dialog").dataset.projectId = project.project_id;
+      $("delete-project-question").textContent = `确定删除“${project.name}”的立项信息吗？`;
+      $("delete-project-dialog").showModal();
+    }));
+    actions.lastChild.title = "删除立项和路径绑定，保留历史资料与工作目录";
+    card.append(title, directory, actions);
+    if (!project.paths.length) {
+      const note = document.createElement("p");
+      note.className = "hint";
+      note.textContent = "未配置工作目录；保留历史资料，不参与项目匹配。";
+      card.append(note);
+    }
+    for (const path of project.paths) {
+      const row = document.createElement("div");
+      row.className = "project-path-row";
+      const label = document.createElement("span");
+      label.textContent = path;
+      row.append(label, projectButton("复制路径", () => copyProjectText(path)));
+      card.append(row);
+    }
+    $("project-list").append(card);
+  }
+}
+
+$("add-project-path").addEventListener("click", (event) => action(event.currentTarget, async () => {
+  const result = await call("choose_vault");
+  if (result.path && !projectPaths.includes(result.path)) projectPaths.push(result.path);
+  renderProjectPaths();
+}));
+
+$("new-project").addEventListener("click", () => {
+  editProject(null);
+  $("project-editor").showModal();
+});
+$("cancel-project").addEventListener("click", () => $("project-editor").close());
+$("cancel-delete-project").addEventListener("click", () => $("delete-project-dialog").close());
+$("confirm-delete-project").addEventListener("click", (event) => action(event.currentTarget, async () => {
+  const result = await call("delete_project", $("delete-project-dialog").dataset.projectId);
+  $("delete-project-dialog").close();
+  await refreshProjects();
+  toast(result.message);
+}));
+$("project-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  action(event.submitter, async () => {
+    const result = await call("configure_project", $("project-name").value.trim(), projectPaths, editingProject);
+    $("project-editor").close();
+    await refreshProjects();
+    toast(result.message);
+  });
 });

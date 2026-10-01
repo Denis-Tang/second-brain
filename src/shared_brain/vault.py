@@ -5,9 +5,6 @@ import json
 import re
 import sqlite3
 import os
-import subprocess
-import shutil
-import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,7 +18,19 @@ def fingerprint(text: str) -> str:
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).isoformat()
+
+
+def search_terms(query: str) -> list[str]:
+    terms = []
+    for token in re.findall(r"\w+", query.casefold()):
+        for part in re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]+|[^\u3400-\u4dbf\u4e00-\u9fff]+", token):
+            if re.match(r"[\u3400-\u4dbf\u4e00-\u9fff]", part):
+                terms.extend(part[index:index + 2] for index in range(max(1, len(part) - 1)))
+            else:
+                terms.append(part)
+    # Keep the useful tail of a 500-character task, even when every bigram is distinct.
+    return list(dict.fromkeys(term for term in terms if term not in {"怎么", "然后", "一直"}))[:512]
 
 
 class Vault:
@@ -98,13 +107,41 @@ class Vault:
             row = con.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
             return json.loads(row[0]) if row else None
 
+    def global_prompt(self):
+        path = self.root / "知识" / "全局提示词.md"
+        text = path.read_text(encoding="utf-8-sig") if path.exists() else ""
+        preferences = self.root / "偏好.md"
+        if preferences.exists():
+            text = "\n\n".join(part for part in (text.rstrip(), preferences.read_text(encoding="utf-8-sig").rstrip()) if part)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text + "\n", encoding="utf-8")
+            preferences.unlink()
+        return text
+
+    def save_global_prompt(self, text: str):
+        path = self.root / "知识" / "全局提示词.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def group(self, project: str):
+        if not project:
+            return "独立项目"
+        info = self.project(project)
+        if info:
+            return Path(info["path"]).parent.name
+        for path in (self.root / "项目").glob("*/立项归档.md"):
+            metadata, _ = self.read(path)
+            if metadata.get("project_id") == project:
+                return path.parent.name
+        raise ValueError("项目不存在")
+
     def projects(self):
         result = []
         for path in (self.root / "项目").glob("*/项目.md"):
             metadata, body = self.read(path)
             if metadata.get("project_id"):
                 result.append({**metadata, "path": path.relative_to(self.root).as_posix(), "body": body})
-        return result
+        return sorted(result, key=lambda project: project.get("created", ""), reverse=True)
 
     def project(self, project_id):
         return next((p for p in self.projects() if p["project_id"] == project_id), None)
@@ -115,41 +152,73 @@ class Vault:
         path = Path(workspace_root or cwd).expanduser().resolve()
         if not path.is_dir():
             raise ValueError("工作区目录不存在")
-        if not workspace_root and shutil.which("git"):
-            # PyInstaller's DLL directory can break Git's bundled DLLs on Windows.
-            bundled_windows = sys.platform == "win32" and getattr(sys, "frozen", False)
-            if bundled_windows:
-                import ctypes
-                ctypes.windll.kernel32.SetDllDirectoryW(None)
-            try:
-                probe = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"],
-                                       stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", timeout=5,
-                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            finally:
-                if bundled_windows:
-                    ctypes.windll.kernel32.SetDllDirectoryW(sys._MEIPASS)
-            if probe.returncode == 0:
-                path = Path(probe.stdout.strip()).resolve()
         return os.path.normcase(str(path))
 
-    def bind(self, workspace: str, choice: str, project_id: str = "", name: str = ""):
-        if choice == "new":
-            if not name.strip() or len(name) > 100 or re.search(r'[<>:"/\\|?*]', name) or name.rstrip(" .") != name or name in {".", ".."}:
-                raise ValueError("请提供有效的项目文件夹名称")
+    def configured_projects(self):
+        paths = self.state("project_paths") or {}
+        return [{"project_id": p["project_id"], "name": p["title"],
+                 "paths": paths.get(p["project_id"], []),
+                 "directory": str(self.root / Path(p["path"]).parent)} for p in self.projects()]
+
+    def match_project(self, workspace: str):
+        matches = [(len(Path(root).parts), p["project_id"]) for p in self.configured_projects()
+                   for root in p["paths"] if Path(workspace).is_relative_to(Path(root))]
+        return max(matches)[1] if matches else ""
+
+    def delete_project(self, project_id: str):
+        info = self.project(project_id)
+        if not info:
+            raise ValueError("项目不存在")
+        card = self.root / info["path"]
+        archive = card.with_name("立项归档.md")
+        if archive.exists():
+            raise ValueError("立项归档中已有同名文件，请先整理该文件")
+        card.rename(archive)
+        mapping = self.state("project_paths") or {}
+        mapping.pop(project_id, None)
+        self.state("project_paths", mapping)
+        self.refresh()
+
+    def configure_project(self, name: str, paths: list[str], project_id: str = ""):
+        if not isinstance(name, str) or not name.strip() or len(name) > 100 or re.search(r'[<>:"/\\|?*]', name) or name.rstrip(" .") != name or name in {".", ".."} or Path(name).is_reserved():
+            raise ValueError("请提供有效的项目文件夹名称")
+        if name == "独立项目":
+            raise ValueError("独立项目是公共资料目录，请使用其他项目名称")
+        if not isinstance(paths, list) or any(not isinstance(p, str) or not p.strip() or not Path(p).is_absolute() for p in paths):
+            raise ValueError("请提供文件夹绝对路径列表")
+        normalized = list(dict.fromkeys(os.path.normcase(str(Path(p).expanduser().resolve())) for p in paths))
+        mapping = self.state("project_paths") or {}
+        info = self.project(project_id) if project_id else None
+        if project_id and not info:
+            raise ValueError("项目不存在")
+        previous = mapping.get(project_id, [])
+        for path in normalized:
+            if path not in previous and not Path(path).is_dir():
+                raise ValueError("工作目录不存在：" + path)
+        for item in self.configured_projects():
+            if item["project_id"] == project_id:
+                continue
+            if item["name"] == name:
+                raise ValueError("项目名称已存在")
+            if set(normalized) & set(item["paths"]):
+                raise ValueError("文件夹已属于项目：" + item["name"])
+        if not info:
+            if not normalized:
+                raise ValueError("新增项目至少选择一个文件夹")
             if (self.root / "项目" / name).exists():
                 raise ValueError("项目文件夹已存在，请关联已有项目")
             project_id = uuid4().hex
             self.write(f"项目/{name}/项目.md", {"kind": "project", "title": name, "project": project_id,
                        "project_id": project_id, "status": "active", "goal": "", "next_actions": []}, "尚未保存进度。")
             self.write(f"项目/{name}/会话索引.md", {"kind": "index", "title": "会话索引", "project": project_id}, "")
-        elif choice == "existing":
-            if not self.project(project_id):
-                raise ValueError("未找到已有项目，请从 bootstrap 返回的项目列表选择")
-        elif choice == "independent":
-            project_id = ""
         else:
-            raise ValueError("归属选择须为 new、existing 或 independent")
-        return self.state("workspace:" + workspace, {"project_id": project_id, "independent": not project_id})
+            metadata, body = self.read(self.root / info["path"])
+            self.write(info["path"], {**metadata, "title": name}, body)
+        mapping[project_id] = normalized
+        self.state("project_paths", mapping)
+        (self.root / "草稿" / self.group(project_id)).mkdir(parents=True, exist_ok=True)
+        self.refresh()
+        return next(p for p in self.configured_projects() if p["project_id"] == project_id)
 
     def save_task(self, task_id: str, project: str, goal: str, progress: str, next_actions: list[str]):
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", task_id):
@@ -183,25 +252,49 @@ class Vault:
         return saved
 
     def save_memory(self, title: str, body: str, project: str = "", verified: bool = False,
-                    evidence: str = "", sources: list[str] | None = None, generated: bool = False, kind: str = "memory", conflict: bool = False, conditions: dict | None = None):
+                    evidence: str = "", sources: list[str] | None = None, generated: bool = False, kind: str = "memory", conflict: bool = False, conditions: dict | None = None,
+                    existing: list[dict] | None = None):
         if not title.strip() or not body.strip():
             raise ValueError("经验标题和正文不能为空")
         if verified and not evidence.strip():
             raise ValueError("已验证经验需要填写实际任务结果或用户确认依据")
         identity = fingerprint(project + "\n" + title.strip().casefold())[:20]
-        relative = f"技能/{identity}/SKILL.md" if kind == "skill" else f"知识/{identity}.md"
+        group = self.group(project)
+        relative = f"技能/{group}/{identity}/SKILL.md" if kind == "skill" else (
+            f"项目/{group}/知识/{identity}.md" if project else f"项目/独立项目/独立知识/{identity}.md")
         target = self.root / relative
-        existing, previous_body = self.read(target) if target.exists() else ({}, "")
-        if generated and previous_body.strip() == body.strip():
-            body = previous_body
-        elif generated and previous_body:
-            body = previous_body.rstrip() + "\n\n" + body
-        source_paths = sorted(set((existing.get("sources") or []) + (sources or [])))
-        metadata = {"kind": kind, "feedback_pending": False, "merged_into": "", "conflict": conflict or existing.get("conflict", False), "conditions": conditions or existing.get("conditions", {}), "title": title.strip(), "project": project,
-                    "verified": verified if not generated else existing.get("verified", False), "evidence": evidence or existing.get("evidence", ""), "sources": source_paths}
+        previous, previous_body = self.read(target) if target.exists() else ({}, "")
+        if generated and previous_body and not any(item["id"] == relative and item["kind"] == kind for item in (existing or [])):
+            raise ValueError("同名知识未提供完整旧正文，保留原文与待处理材料；请检查检索范围或正文是否超过维护额度。")
+        source_paths = sorted(set((previous.get("sources") or []) + (sources or [])))
+        metadata = {"kind": kind, "feedback_pending": False, "merged_into": "", "conflict": conflict or previous.get("conflict", False), "conditions": conditions or previous.get("conditions", {}), "title": title.strip(), "project": project,
+                    "verified": verified if not generated else previous.get("verified", False), "evidence": evidence or previous.get("evidence", ""), "sources": source_paths}
         if kind == "skill":
             metadata.update(name=identity, description=title.strip())
         return self.write(relative, metadata, body)
+
+    def save_change(self, change: dict, agent: str, session_id: str):
+        title = change["object"].strip()
+        identity = fingerprint(title.casefold())[:20]
+        relative = f"项目/独立项目/独立知识/{identity}.md"
+        path = self.root / relative
+        metadata, body = self.read(path) if path.exists() else ({}, "")
+        history, separator, organized = body.partition("\n## 整理经验\n")
+        entry = (f"### {now()} · {change['action']}\n"
+                 f"- 位置：{change['location']}\n- 结果：{change['state']}\n"
+                 f"- 验证：{change.get('evidence') or '未验证'}\n- 执行 Agent：{agent}\n")
+        history = history.rstrip() + "\n\n" + entry
+        body = history + (separator + organized if separator else "")
+        metadata.update(kind="object", title=title, project="", location=change["location"],
+                        current_state=change["state"], evidence=change.get("evidence", ""),
+                        verified=bool(change.get("evidence")), conditions=change.get("conditions", {}),
+                        session_id=session_id)
+        return self.write(relative, metadata, body)
+
+    def organize_object(self, relative: str, body: str):
+        metadata, previous = self.read(self.root / relative)
+        history = previous.partition("\n## 整理经验\n")[0].rstrip()
+        return self.write(relative, metadata, history + "\n\n## 整理经验\n\n" + body)
 
     def import_document(self, source: Path):
         if source.suffix.lower() not in {".md", ".txt"} or not source.is_file():
@@ -224,6 +317,8 @@ class Vault:
             previous = {row["path"]: row["hash"] for row in con.execute("SELECT path,hash FROM notes")}
             for folder in ("项目", "知识", "资料", "会话总结", "技能"):
                 for path in (self.root / folder).rglob("*.md"):
+                    if path == self.root / "知识" / "全局提示词.md":
+                        continue
                     relative = path.relative_to(self.path).as_posix()
                     text = path.read_text(encoding="utf-8-sig")
                     digest = fingerprint(text)
@@ -247,7 +342,7 @@ class Vault:
             sessions = memories = tokens = 0
             for row in con.execute("SELECT kind,body FROM notes"):
                 sessions += row["kind"] == "session"
-                memories += row["kind"] in {"memory", "skill"}
+                memories += row["kind"] in {"memory", "skill", "object"}
                 body = row["body"].strip()
                 ascii_count = sum(char.isascii() for char in body)
                 tokens += (ascii_count + 3) // 4 + len(body) - ascii_count
@@ -282,7 +377,7 @@ class Vault:
         samples.extend(buckets.values())
         if samples[-1]["at"] != end.isoformat(timespec="seconds"):
             samples.append({**current, "at": end.isoformat(timespec="seconds")})
-        metrics = [("sessions", "会话总结", "篇"), ("memories", "知识（含草稿）", "条"),
+        metrics = [("sessions", "会话总结", "篇"), ("memories", "知识与技能", "条"),
                    ("estimated_tokens", "正文估算 token", "tokens")]
         return {"period": period, "metrics": [
             {"key": key, "label": label, "unit": unit, "current": current[key],
@@ -290,32 +385,48 @@ class Vault:
             for key, label, unit in metrics
         ]}
 
-    def search(self, query: str, project: str = "", limit: int = 5):
-        terms = re.findall(r"\w+", query)[:8]
+    def search(self, query: str, project: str = "", limit: int = 5, kinds=None):
+        terms = search_terms(query)
         if not terms:
             return []
+        chinese = bool(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", query))
+        minimum = 2 if chinese and len(terms) >= 3 else 1
         self.refresh()
+        scope = "" if project in {"", "all"} else " AND n.project=?"
+        parameters = [] if not scope else ["" if project == "independent" else project]
+        if kinds:
+            scope += " AND n.kind IN (" + ",".join("?" for _ in kinds) + ")"
+            parameters += list(kinds)
         with self.connect() as con:
-            if all(len(t) >= 3 for t in terms):
+            if not chinese and all(len(t) >= 3 for t in terms):
                 expression = " OR ".join('"' + t.replace('"', '""') + '"' for t in terms)
                 rows = con.execute("SELECT n.* FROM search JOIN notes n ON n.path=search.path "
-                                   "WHERE search MATCH ? AND n.project IN ('',?) "
-                                   "ORDER BY n.verified DESC, (n.kind='memory') DESC, rank LIMIT ?",
-                                   (expression, project, limit)).fetchall()
+                                   "WHERE search MATCH ?" + scope +
+                                   " ORDER BY rank,n.verified DESC,(n.kind='memory') DESC",
+                                   (expression, *parameters)).fetchall()
             else:
-                clauses = " OR ".join("instr(lower(title || ' ' || body), lower(?))>0" for _ in terms)
-                rows = con.execute(f"SELECT * FROM notes WHERE ({clauses}) AND project IN ('',?) "
-                                   "ORDER BY verified DESC, (kind='memory') DESC, path LIMIT ?",
-                                   (*terms, project, limit)).fetchall()
+                score = " + ".join("(instr(lower(title || ' ' || body), lower(?))>0)" for _ in terms)
+                rows = con.execute(f"SELECT n.*, ({score}) AS score FROM notes n WHERE score>=?" + scope,
+                                   (*terms, minimum, *parameters)).fetchall()
+                rows = sorted(rows, key=lambda row: (
+                    -row["score"],
+                    -row["verified"], row["path"]))
         result = []
         for row in rows:
-            if json.loads(row["metadata"]).get("feedback_pending") or json.loads(row["metadata"]).get("merged_into"):
+            metadata = json.loads(row["metadata"])
+            if metadata.get("feedback_pending") or metadata.get("merged_into"):
                 continue
             body = row["body"]
             positions = [body.casefold().find(t.casefold()) for t in terms]
             start = max(0, min((p for p in positions if p >= 0), default=0) - 60)
             result.append({"path": row["path"], "title": row["title"][:160], "kind": row["kind"],
-                           "verified": bool(row["verified"]), "conflict": json.loads(row["metadata"]).get("conflict", False), "text": body[start:start + 600]})
+                           "project": row["project"], "conditions": metadata.get("conditions", {}),
+                           "evidence": metadata.get("evidence", ""), "sources": metadata.get("sources", []),
+                           "verified": bool(row["verified"]), "conflict": metadata.get("conflict", False), "text": body[start:start + 600]})
+            if row["kind"] == "object":
+                result[-1].update(location=metadata.get("location", ""), current_state=metadata.get("current_state", ""))
+            if len(result) == limit:
+                break
         return result
 
     def pending(self):
@@ -323,7 +434,10 @@ class Vault:
         with self.connect() as con:
             return [dict(r) for r in con.execute(
                 "SELECT n.* FROM notes n LEFT JOIN processed p ON n.path=p.path "
-                "WHERE n.kind IN ('source','session','memory','skill') AND (p.hash IS NULL OR p.hash != n.hash) "
+                "WHERE ((n.kind='session' AND n.project!='') OR "
+                "(n.kind IN ('memory','object') AND n.path LIKE '项目/%') OR "
+                "(n.kind='skill' AND n.path LIKE '技能/%/%/SKILL.md')) "
+                "AND (p.hash IS NULL OR p.hash != n.hash) "
                 "ORDER BY json_extract(n.metadata,'$.created'),n.path")]
 
     def mark_processed(self, rows: list[dict], receipt: dict):
