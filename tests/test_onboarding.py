@@ -1,7 +1,9 @@
 import json
+from pathlib import Path
 
 from shared_brain.onboarding import build_prompt
 from shared_brain.service import BrainService
+from shared_brain.desktop import DesktopAPI
 
 
 def test_prompt_embeds_runtime_paths_and_valid_mcp_json_without_writing(tmp_path):
@@ -48,3 +50,34 @@ def test_agent_prompt_reuses_saved_vault_and_updates_after_switch(tmp_path):
     prompt = service.agent_prompt()["text"]
     assert f"Vault 绝对路径：{second.resolve()}" in prompt
     assert str(first.resolve()) not in prompt
+
+
+def test_unbind_prompt_keeps_materials_and_uses_current_project_mapping(tmp_path):
+    service = BrainService(tmp_path / "app")
+    api = DesktopAPI(service)
+    assert "error" in api.unbind_prompt()
+    first = tmp_path / "知识库"
+    workspace = tmp_path / "工作目录"
+    workspace.mkdir()
+    service.initialize(str(first))
+    service.configure_project("解绑项目", [str(workspace)])
+    note = first / "用户笔记.md"
+    note.write_text("用户资料保持原样", encoding="utf-8")
+    before = {p: p.read_bytes() for folder in (first, service.settings.home)
+              for p in folder.rglob("*") if p.is_file()}
+    prompt = api.unbind_prompt()["text"]
+    configs = [json.loads(block.split("```", 1)[0]) for block in prompt.split("```json\n")[1:]]
+    assert configs[0] == service.mcp_config()
+    assert configs[1] == service.projects()["projects"]
+    assert str(first.resolve()) in prompt and str(service.settings.home.resolve()) in prompt
+    assert [Path(path) for path in configs[1][0]["paths"]] == [workspace.resolve()]
+    assert Path(configs[1][0]["directory"]) == first / "项目" / "解绑项目"
+    assert all(text in prompt for text in ("merged_into", "feedback_pending", "草稿", "errors",
+                                          "entries", "codex mcp remove shared_brain", "保留其他 MCP"))
+    assert {p: p.read_bytes() for folder in (first, service.settings.home)
+            for p in folder.rglob("*") if p.is_file()} == before
+    second = tmp_path / "另一知识库"
+    service.initialize(str(second))
+    prompt = api.unbind_prompt()["text"]
+    assert str(second.resolve()) in prompt and str(first.resolve()) not in prompt
+    assert "解绑项目" not in prompt

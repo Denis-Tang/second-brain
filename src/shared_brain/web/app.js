@@ -60,7 +60,7 @@ async function refresh(fillForms = false) {
 
 function updatePromptAvailability() {
   const ready = vaultReady && $("vault-path").value.trim() === vaultPath;
-  document.querySelectorAll("[data-copy-vault], [data-copy-agent]").forEach((button) => {
+  document.querySelectorAll("[data-copy-vault], [data-copy-agent], [data-copy-unbind]").forEach((button) => {
     button.disabled = !ready || button.dataset.busy === "true";
   });
   $("global-prompt").disabled = !ready;
@@ -237,6 +237,14 @@ document.querySelectorAll("[data-copy-agent]").forEach((button) => {
     const result = await call("agent_prompt");
     await navigator.clipboard.writeText(result.text);
     toast("Agent 接入提示词已复制");
+  }));
+});
+
+document.querySelectorAll("[data-copy-unbind]").forEach((button) => {
+  button.addEventListener("click", () => action(button, async () => {
+    const result = await call("unbind_prompt");
+    await navigator.clipboard.writeText(result.text);
+    toast("解绑提示词已复制，请发送给要解绑的 Agent");
   }));
 });
 

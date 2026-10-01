@@ -84,10 +84,11 @@ def test_global_prompt_saves_separately_and_reloads_after_vault_switch():
     overview = html.split('<section id="overview"')[1].split('</section>')[0]
     settings = html.split('<section id="settings"')[1].split('</section>')[0]
     assert 'id="global-prompt-form"' in overview and 'id="global-prompt-form"' not in settings
+    assert 'data-copy-unbind disabled>解绑提示词</button>' in settings.split('</form>')[-1]
     assert overview.index('class="hint growth-note"') < overview.index('id="global-prompt-form"')
     script = r'''
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
-const elements = new Map(), saves = [], configurations = [];
+const elements = new Map(), saves = [], configurations = [], copied = [];
 const get = id => {
   if (!elements.has(id)) elements.set(id, {value: '', checked: false, dataset: {},
     classList: {toggle() {}}, addEventListener(event, fn) {this[event] = fn;}});
@@ -95,17 +96,19 @@ const get = id => {
 };
 let state = {ready: true, global_prompt: '旧库提示词', settings: {
   vault_path: 'D:/old', base_url: 'https://api.example.com', model: 'example', maintenance_time: '02:00'}};
-const copyButtons = ['data-copy-vault', 'data-copy-agent'];
+const copyButtons = ['data-copy-vault', 'data-copy-agent', 'data-copy-unbind'];
 const context = {document: {getElementById: get,
   querySelectorAll: selector => copyButtons.filter(name => selector.includes(name)).map(get)},
   window: {addEventListener() {}, desktop: {
     status: async () => state,
+    unbind_prompt: async () => ({text: '解绑规则：' + state.settings.vault_path}),
     save_global_prompt: async text => {saves.push(text); return {message: 'saved', global_prompt: text};},
     configure: async values => {
       configurations.push(values);
       state = {ready: true, settings: values, global_prompt: '新库提示词'};
       return {message: 'configured'};
-    }}}, setTimeout() {}, clearTimeout() {}};
+    }}}, navigator: {clipboard: {writeText: async text => copied.push(text)}},
+    setTimeout() {}, clearTimeout() {}};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 const settle = () => new Promise(resolve => setImmediate(resolve));
@@ -113,6 +116,10 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   await vm.runInContext("activePage = 'settings'; refresh(true)", context);
   assert.equal(get('global-prompt').value, '旧库提示词');
   for (const name of copyButtons) assert.equal(get(name).disabled, false);
+  get('data-copy-unbind').click();
+  await settle();
+  assert.deepEqual(copied, ['解绑规则：D:/old']);
+  assert.match(get('toast').textContent, /解绑提示词已复制/);
   get('global-prompt').value = '我编辑的提示词';
   get('global-prompt-form').submit({preventDefault() {}, submitter: get('save-global-prompt')});
   await settle();
@@ -132,6 +139,9 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   assert.equal(get('global-prompt').value, '新库提示词');
   assert.equal(get('save-global-prompt').disabled, false);
   for (const name of copyButtons) assert.equal(get(name).disabled, false);
+  get('data-copy-unbind').click();
+  await settle();
+  assert.deepEqual(copied, ['解绑规则：D:/old', '解绑规则：D:/new']);
   assert.deepEqual(saves, ['我编辑的提示词']);
 })().catch(error => {console.error(error); process.exitCode = 1;});
 '''

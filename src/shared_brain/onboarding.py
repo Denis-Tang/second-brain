@@ -3,6 +3,47 @@ import json
 from pathlib import Path
 
 
+def build_unbind_prompt(vault_path: Path, home: Path, mcp_config: dict, projects: list[dict]) -> str:
+    command = mcp_config["mcpServers"]["shared_brain"]
+    installation = Path(__file__).resolve().parents[2] if "-m" in command["args"] else Path(command["command"]).parent
+    return f"""请将当前 Agent 宿主与 Shared Brain（第二大脑）解绑，保留资料，并改为直接读写原有 Markdown。
+本次只处理当前宿主及其使用的配置/profile；共用这些配置的客户端会一起生效，其他独立宿主保留。
+知识库绝对路径：{vault_path}
+应用数据目录：{home}
+宿主接入说明：{installation / 'integrations' / 'README.md'}
+现有 Shared Brain MCP 配置（用于定位接入，不是重新安装）：
+```json
+{json.dumps(mcp_config, ensure_ascii=False, indent=2)}
+```
+项目工作目录与资料目录对应关系（解绑时的快照，后续路径变更直接更新薄入口）：
+```json
+{json.dumps(projects, ensure_ascii=False, indent=2)}
+```
+
+按顺序完成：
+1. 如当前阶段有未保存的有用进展，先通过现有接入保存完整总结、项目进度及真实错误；无新内容跳过。不要启动付费维护或模型评测。
+2. 检查当前宿主实际生效的用户级、项目级和 profile 接入来源。修改仓库外配置前复制一份 .bak，只清理本项目接入，保留其他 MCP、Hook、插件和用户规则，不用旧备份覆盖整份配置。
+   - Codex：用户级使用 codex mcp remove shared_brain，确保使用当前宿主的 CODEX_HOME；项目级从对应 .codex/config.toml 移除同一服务。检查 hooks.json 和 config.toml 中的 Hook，仅删除调用本安装的 native-hooks.mjs 或 shared-brain hook 的处理项，不关闭整个 Hook 功能。
+   - Claude Code：按实际注册作用域使用 claude mcp remove shared_brain --scope user、project 或 local；在相应设置中仅移除本项目 Hook。
+   - DeepSeek Harness / 旧 Oh-DSH：检查当前 profile、全局 cordis.patch.yml 和启动参数 --patch，移除 shared-brain-mcp、shared-brain-lifecycle 两项。保留其他插件与 !!js 表达式，不覆盖整份 YAML。
+   - PI-Desktop：在“设置 → MCP”移除该全局连接；项目开关仅停用所选项目。使用宿主实际提供的入口，不猜测内部 API。
+   若服务曾改名，按以上程序命令和 --home 定位实际名称；不要只凭服务名称清理其他安装。
+3. 将当前宿主 AGENTS.md、CLAUDE.md 或导入文件中的 Shared Brain 专属薄入口替换为下面的文件读写规则，清除启动 bootstrap、检索 search、收尾 save/feedback 等自动调用要求。只改对应段落，保留用户其他约定。
+4. 核对接入配置与工具列表，报告实际清理位置及仍未解除的入口。请用户重启连接或宿主后新开会话，验证 Shared Brain 五工具消失、启动和收尾无专属提醒，并能直接读取已有项目资料。旧聊天历史不用删除。
+
+解绑后保留的 Markdown 薄入口：
+- 使用上述知识库与项目对应关系。按宿主工作区根目录匹配，子目录继承，最具体目录优先；临时 cd 不改变归属，未匹配不自行创建项目。
+- 新根会话读取非空“知识/全局提示词.md”全文；该文件只由用户编辑。按需读取当前项目的项目.md、会话索引.md、相关总结和知识，用 rg 等本地工具检索，不批量注入整个知识库；草稿只在用户提供时读取。
+- 有用阶段直接更新原项目卡的 progress/next_actions 和完整会话总结，更新会话索引的正文链接及 entries，保留原条目、属性、ID、创建时间、用户正文与相对链接。同一会话更新同一总结，任务和决策按需记录；独立会话不自动创建项目卡或总结。根代理负责共享写入，子代理回传。
+- 实际电脑与工具变更继续更新“项目/独立项目/独立知识/”对应对象，保留位置、当前状态、验证和简短历史。经验保留 sources、conditions、verified、evidence、conflict；未验证不写成已验证。
+- merged_into 非空的记录只作历史，转读指向的新笔记；feedback_pending 为真的记录待复核，不当作现行结论，不批量清空这些标记。必要时核对原始来源和后续反馈。
+- 原始错误及成功反馈仍在上述应用数据目录的 errors 下，按需读取。直接 Markdown 读写不依赖 Shared Brain 程序、MCP、Hook 或 SQLite，不自动整理或安装技能。
+
+保留整个知识库以及应用数据目录：错误 JSON、项目映射、维护进度、图表历史和费用账本不全在 Markdown 中。不要删除、搬迁或重建这些资料，也不要读取或搬运凭据及浏览器数据。
+解绑当前 Agent 不会自动关闭桌面夜间维护。只有用户明确退出所有接入时，再关闭维护并从托盘退出程序。
+批量读取必要配置，直接完成修改；不另建报告、登记表或迁移框架。"""
+
+
 def build_prompt(vault_path: Path, mcp_config: dict) -> str:
     command = mcp_config["mcpServers"]["shared_brain"]
     hook = {**command, "args": command["args"][:-1] + ["hook"]}

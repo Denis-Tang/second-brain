@@ -24,6 +24,31 @@ Claude Code 把 `Codex` 改为 `Claude`。为 `SessionStart`、`UserPromptSubmit
 
 Codex 的新 Hook 必须通过宿主原生信任机制；只配置命令不代表已启用。不要使用跳过信任的运行参数。
 
+## PI-Desktop：原生 MCP 接入与退出
+
+已在 PI-Desktop 0.15.10 验证原生 MCP 接入，无需安装适配器或修改全局 `AGENTS.md`。
+
+在 PI-Desktop 的“设置 → MCP → 新增”中选择全局级、本地程序（stdio），填写：
+
+- 标识符：`shared_brain`；名称：`Shared Brain 0.4.1`。
+- 可执行文件：`<Shared Brain 安装目录>/shared-brain.exe`。
+- 参数：`--home "<应用数据目录>" mcp`，与 Shared Brain 桌面使用同一个 home。
+- 环境变量留空，不填写模型密钥；知识库路径继续由 Shared Brain 设置管理。
+
+保存并启用，点击“测试连接”，应显示 5 个工具。随后新建任务，询问已有项目经验；PI-Desktop 可通过原生 `ToolSearch` 按需发现 `mcp_shared_brain_search`。本方式已验证 Agent 主动检索，不安装启动、失败或收尾 Hook，也不保证每次会话自动 bootstrap 或保存。需要保存时明确要求 Agent 按工具说明执行。
+
+**当前项目临时脱离：**
+
+1. 等当前回合结束。
+2. 打开“设置 → MCP”，在“选择项目”中选中要停用的项目，关闭 `Shared Brain 0.4.1` 右侧开关。
+3. 在该项目中新建任务继续使用 PI-Desktop。旧聊天里已经读入的知识仍在聊天历史中。
+
+PI-Desktop 0.15.10 的开关按选中的项目生效；连接旁的“全局”标签表示配置的保存位置，不代表此开关会停用所有项目。恢复时选中同一项目，打开开关并新建任务。仅关闭 Shared Brain 桌面窗口不能代替停用连接。
+
+**所有项目彻底脱离：**等当前回合结束，在“设置 → MCP”中打开该全局服务器的“操作 → 移除”，再点“再点一次删除”，随后新建任务。本接入已实测：移除后全局及项目查询均无该连接，它启动的 Shared Brain 后台进程退出。普通模型对话仍可用；要重新接入，按上面的字段新增连接即可。
+
+永久退出时可再按需退出或卸载 Shared Brain 程序。知识库 Markdown、Obsidian 资料及 PI-Desktop 聊天保留，不需要迁移，也不要删除整个 `.agents` 或 `.pi` 目录。全局连接项由 PI-Desktop 保存在 `~/.agents/servers/shared_brain.json`；本接入没有额外写入全局指令或 Hook，因此无需清理其他入口。
+
 ## 旧 Oh-DSH Desktop
 
 安装目录中的 Harness 0.1.2 已带 `@deepseek-ai/dsh-mcp-client`，复用它，无需新增工具桥。在当前 profile 的 `cordis.patch.yml` 中添加两项 `insert`：

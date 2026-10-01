@@ -47,6 +47,9 @@ class DesktopAPI:
     def agent_prompt(self):
         return self._call(self._service.agent_prompt)
 
+    def unbind_prompt(self):
+        return self._call(self._service.unbind_prompt)
+
     def overview(self, period="24h"):
         return self._call(self._service.overview, period)
 

@@ -373,7 +373,7 @@ class Vault:
             if latest is None or tuple(latest) != totals:
                 con.execute("INSERT INTO observations VALUES (?,?,?,?)", (now(), *totals))
             if not tracking:
-                con.execute("INSERT INTO state VALUES ('daily_writes_since',?)", (json.dumps(day),))
+                con.execute("INSERT OR IGNORE INTO state VALUES ('daily_writes_since',?)", (json.dumps(day),))
             elif added_tokens:
                 con.execute("INSERT INTO daily_writes VALUES (?,?) ON CONFLICT(day) DO UPDATE SET tokens=tokens+excluded.tokens",
                             (day, added_tokens))

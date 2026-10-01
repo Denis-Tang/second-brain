@@ -6,7 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .model import ModelClient
-from .onboarding import build_prompt
+from .onboarding import build_prompt, build_unbind_prompt
 from .settings import SettingsStore
 from .vault import Vault, now, fingerprint
 from .errors import ErrorReports
@@ -85,6 +85,11 @@ class BrainService:
         if not path:
             raise ValueError("请先选择并保存仓库路径")
         return {"text": build_prompt(Path(path), self.mcp_config())}
+
+    def unbind_prompt(self) -> dict:
+        vault = self._vault()
+        return {"text": build_unbind_prompt(vault.path, self.settings.home.resolve(),
+                                           self.mcp_config(), vault.configured_projects())}
 
     def overview(self, period: str = "24h") -> dict:
         if period not in {"24h", "7d", "30d"}:
