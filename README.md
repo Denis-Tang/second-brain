@@ -2,7 +2,7 @@
 
 面向干净 Obsidian 仓库的本地第二大脑。Windows 桌面提供总观、项目配置、设置三页；Agent 通过 MCP 启动、检索、保存和反馈。无需复制旧 DSH，也不依赖开发者电脑路径。
 
-当前源码与本地构建为 **0.4.1**，尚未发布到 Releases。以下操作对应 0.4.1；公开下载仍为 0.4.0，请按其 Release 说明操作。
+当前源码与 Windows 分发包版本为 **0.4.1**。以下操作对应 0.4.1，请从 [GitHub Releases](https://github.com/Denis-Tang/second-brain/releases/tag/v0.4.1) 下载对应版本。
 
 ## 开始使用
 
