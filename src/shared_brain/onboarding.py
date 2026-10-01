@@ -11,6 +11,8 @@ def build_prompt(vault_path: Path, mcp_config: dict) -> str:
     runtime_note = "源码运行时先按 scripts/build.ps1 构建分发包，再使用现成 Hook 适配。" if source_mode else f"Hook 使用包内 Node.js：{installation / 'runtime' / 'node.exe'}，无需另装 Node.js。"
     return f"""请将 Shared Brain 接入当前 Agent 宿主，按真实宿主文档配置并验证。
 Vault 绝对路径：{vault_path}
+以上路径来自用户在 Shared Brain 中已保存的 Vault 设置；所有 Agent 复用同一个 Vault 和下面 MCP 配置中的 --home，不按宿主另建仓库。
+本次仅接入当前 Agent。即使其他 Agent 已配置过，也不要重复初始化、重建 Obsidian 架构、复制模板或改写已有笔记；先检查当前宿主配置，已有相同 shared_brain 接入则复用，只补缺少的接入项。
 MCP 配置（合并到现有配置，保留其他服务）：
 ```json
 {json.dumps(mcp_config, ensure_ascii=False, indent=2)}
@@ -19,7 +21,7 @@ MCP 服务名统一为 shared_brain。
 先读取宿主接入说明：{installation / 'integrations' / 'README.md'}。
 已有适配优先使用，不另写脚本：Codex / Claude Code 使用 native-hooks.mjs，旧 Oh-DSH 使用 oh-dsh.mjs，DeepSeek Harness 0.1.7 使用 deepseek-harness.mjs；均在上述 integrations 目录。
 {runtime_note}
-程序自动创建以下基础目录，保留已有文件：
+以下基础目录由程序在保存 Vault 设置时自动补齐，不是让 Agent 再次创建的任务清单；已有架构和文件直接复用：
 会话总结/    仅项目会话，保存为 <Agent>/YYYY/MM/日期-会话标识.md，同一会话持续更新
 项目/        立项资料、项目知识；独立项目/独立知识/ 按对象保存公共电脑与工具变更
 知识/        全局提示词.md，仅用户编辑，非空时所有会话全文加载

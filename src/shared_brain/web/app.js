@@ -1,8 +1,8 @@
 const $ = (id) => document.getElementById(id);
 const pages = {
-  projects: ["项目配置", "统一管理项目与工作目录，未配置的路径自动作为独立会话。"],
-  overview: ["第二大脑总观", "查看会话总结、知识与技能、正文 token 的积累，编辑全局提示词。"],
-  settings: ["工作区与夜间维护", "选择 Vault，配置模型连接与每天的维护时间。"],
+  projects: ["项目配置", "让每个项目都有自己的记录。"],
+  overview: ["总观", "看看知识库最近的积累。"],
+  settings: ["设置", "选好知识库，就可以开始。"],
 };
 let toastTimer;
 let activePage = "overview";
@@ -19,7 +19,7 @@ function toast(message, error = false) {
 }
 
 async function call(method, ...args) {
-  const result = await window.pywebview.api[method](...args);
+  const result = await window.desktop[method](...args);
   if (result.error) throw new Error(result.error);
   return result;
 }
@@ -38,11 +38,8 @@ async function refresh(fillForms = false) {
   $("budget-status").textContent = budget ? `本月已用/预留 ¥${budget.used_or_reserved_cny.toFixed(4)} / ¥${budget.monthly_limit_cny} · 剩余 ¥${budget.remaining_cny.toFixed(4)} · 今日 ${budget.today_calls}/3 批` : "";
   vaultReady = state.ready;
   vaultPath = settings.vault_path || "";
-  $("ready-label").textContent = state.ready ? "Vault 已就绪" : (vaultPath ? "等待保存设置" : "等待选择仓库");
+  $("ready-label").textContent = state.ready ? "知识库已就绪" : (vaultPath ? "等待保存设置" : "等待选择仓库");
   $("ready-dot").classList.toggle("ready", state.ready);
-  document.querySelectorAll("[data-copy-vault], [data-copy-agent]").forEach((button) => {
-    button.disabled = !vaultPath || button.dataset.busy === "true";
-  });
   $("key-status").textContent = state.key_configured ? "密钥已配置" : "密钥未配置";
   $("key-status").classList.toggle("configured", state.key_configured);
   if (fillForms) {
@@ -63,6 +60,9 @@ async function refresh(fillForms = false) {
 
 function updatePromptAvailability() {
   const ready = vaultReady && $("vault-path").value.trim() === vaultPath;
+  document.querySelectorAll("[data-copy-vault], [data-copy-agent]").forEach((button) => {
+    button.disabled = !ready || button.dataset.busy === "true";
+  });
   $("global-prompt").disabled = !ready;
   $("save-global-prompt").disabled = !ready;
   $("prompt-vault").textContent = ready ? `当前知识库：${vaultPath}` : "请先保存知识库设置。";
@@ -70,80 +70,102 @@ function updatePromptAvailability() {
 
 function activatePage(page) {
   activePage = page;
+  $("open-setup-guide").hidden = page !== "settings";
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.page === page));
   document.querySelectorAll(".page").forEach((item) => item.classList.toggle("active", item.id === page));
   [$("page-title").textContent, $("page-description").textContent] = page === "settings" && !vaultReady
-    ? ["首次设置", "保存知识库路径后，在项目配置中管理工作目录，再接入 Agent。"] : pages[page];
+    ? ["首次设置", "选择文件夹并保存，再复制提示词接入 Agent。"] : pages[page];
 }
 
-function svgElement(tag, attributes) {
-  const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
-  for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, value);
-  return element;
-}
+let selectedMetric = "sessions";
+let overviewMetrics = [];
 
 function renderMetrics(metrics) {
+  overviewMetrics = metrics;
   $("growth-cards").replaceChildren();
-  const end = Date.now();
-  const duration = { "24h": 24, "7d": 7 * 24, "30d": 30 * 24 }[overviewPeriod] * 3600000;
-  const start = end - duration;
-  metrics.forEach((metric, index) => {
-    const card = document.createElement("article");
-    card.className = "stat-card";
-    card.style.setProperty("--chart-color", ["#345de3", "#2e917d", "#9670c8"][index]);
-    const label = document.createElement("span");
-    label.textContent = metric.label;
+  for (const metric of metrics) {
+    const card = document.createElement("button");
+    card.className = "stat";
+    card.classList.toggle("active", metric.key === selectedMetric);
+    card.setAttribute("aria-pressed", metric.key === selectedMetric);
+    const label = document.createElement("small");
+    label.textContent = metric.key === "estimated_tokens" ? "知识库 token" : metric.label;
     const total = document.createElement("strong");
-    total.id = "count-" + metric.key;
     total.textContent = Number(metric.current).toLocaleString("zh-CN");
-    const unit = document.createElement("small");
-    unit.textContent = `当前 · ${metric.unit}`;
-    card.append(label, total, unit);
-    const points = metric.points;
-    if (!points.length) {
-      const empty = document.createElement("p");
-      empty.className = "chart-empty";
-      empty.textContent = "暂无历史记录";
-      card.append(empty);
-    } else {
-      const times = points.map((point) => new Date(point.at).getTime());
-      const values = points.map((point) => point.value);
-      const low = Math.min(...values), high = Math.max(...values);
-      const last = times[times.length - 1];
-      const coordinates = points.map((point, i) => [
-        52 + (times[i] - start) / duration * 254,
-        low === high ? 47 : 84 - (point.value - low) / (high - low) * 72,
-      ]);
-      const chart = svgElement("svg", { viewBox: "0 0 320 100", class: "growth-chart", role: "img", "aria-label": `${metric.label}历史，${points.length}条记录` });
-      if (points.length > 1) chart.append(svgElement("polyline", { points: coordinates.map((point) => point.join(",")).join(" "), fill: "none", stroke: "currentColor", "stroke-width": 2.5, "stroke-linejoin": "round" }));
-      const [x, y] = coordinates[coordinates.length - 1];
-      const dot = svgElement("circle", { cx: x, cy: y, r: 3.5, fill: "currentColor" });
-      const title = svgElement("title", {});
-      title.textContent = `${new Date(last).toLocaleString("zh-CN")} · ${values[values.length - 1].toLocaleString("zh-CN")} ${metric.unit}`;
-      dot.append(title);
-      chart.append(dot);
-      for (const [value, position] of high === low ? [[high, 50]] : [[high, 15], [low, 87]]) {
-        const axisLabel = svgElement("text", { x: 0, y: position, class: "chart-tick" });
-        axisLabel.textContent = Number(value).toLocaleString("zh-CN", { notation: "compact" });
-        chart.append(axisLabel);
-      }
-      const axis = document.createElement("div");
-      axis.className = "chart-axis";
-      for (const at of [start, end]) {
-        const time = document.createElement("time");
-        time.dateTime = new Date(at).toISOString();
-        time.textContent = new Date(at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
-        axis.append(time);
-      }
-      card.append(chart, axis);
-    }
+    const change = document.createElement("em");
+    const delta = metric.current - (metric.points[0]?.value ?? metric.current);
+    change.textContent = metric.points.length ? `${delta >= 0 ? "增加" : "减少"} ${Math.abs(delta).toLocaleString("zh-CN")} ${metric.unit}` : "暂无记录";
+    card.append(label, total, change);
+    card.onclick = () => { selectedMetric = metric.key; renderMetrics(overviewMetrics); };
     $("growth-cards").append(card);
+  }
+  renderHistory(metrics.find(metric => metric.key === selectedMetric));
+}
+
+function renderHistory(metric) {
+  const plot = $("chart");
+  plot.classList.remove("tracking");
+  plot.onpointermove = plot.onpointerleave = null;
+  plot.replaceChildren();
+  $("chart-title").textContent = metric.label;
+  $("axis-start").textContent = $("axis-end").textContent = "";
+  if (!metric.points.length) {
+    const empty = document.createElement("p");empty.className = "chart-empty";empty.textContent = "开始积累后，这里会显示变化。";plot.append(empty);return;
+  }
+  const points = metric.points, values = points.map(p => p.value), times = points.map(p => new Date(p.at).getTime());
+  const start = times[0], end = times[times.length-1], low = Math.min(...values), high = Math.max(...values);
+  const coords = points.map((p,i) => [end === start ? 350 : 42 + (times[i]-start)/(end-start)*624, high === low ? 90 : 156-(p.value-low)/(high-low)*132]);
+  const stamp = time => new Date(time).toLocaleString("zh-CN", {month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});
+  $("axis-start").textContent = stamp(start);$("axis-end").textContent = stamp(end);
+  plot.innerHTML = `<svg viewBox="0 0 700 180" preserveAspectRatio="none" role="img" aria-label="历史变化"><defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#729ae5" stop-opacity=".23"/><stop offset="100%" stop-color="#729ae5" stop-opacity="0"/></linearGradient></defs>${[24,90,156].map(y=>`<line x1="42" x2="666" y1="${y}" y2="${y}" stroke="#edf1f7"/>`).join('')}<path d="M${coords[0][0]} 166 L${coords.map(p=>p.join(' ')).join(' L')} L${coords[coords.length-1][0]} 166 Z" fill="url(#fill)"/><polyline points="${coords.map(p=>p.join(',')).join(' ')}" fill="none" stroke="#497cdf" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><line id="cross" y1="12" y2="166" stroke="#a6bde6" stroke-dasharray="4" visibility="hidden"/><circle id="point" r="5" fill="#497cdf" stroke="white" stroke-width="2" visibility="hidden"/></svg><div id="chart-tip" class="chart-tip" hidden><span></span><strong></strong></div>`;
+  const cross=$("cross"),point=$("point"),tip=$("chart-tip");let selected=null;
+  plot.onpointermove=e=>{
+    const r=plot.getBoundingClientRect(),cursor=(e.clientX-r.left)/r.width*700;
+    let i=0;for(let j=1;j<coords.length;j++)if(Math.abs(coords[j][0]-cursor)<Math.abs(coords[i][0]-cursor))i=j;
+    if(i===selected)return;
+    const p=coords[i];cross.style.transform=`translateX(${p[0]}px)`;cross.setAttribute('visibility','visible');
+    point.style.transform=`translate(${p[0]}px,${p[1]}px)`;point.setAttribute('visibility','visible');
+    tip.firstElementChild.textContent=stamp(times[i]);tip.lastElementChild.textContent=`${values[i].toLocaleString()} ${metric.unit}`;tip.hidden=false;
+    const x=p[0]/700*r.width,y=p[1]/180*r.height,w=tip.offsetWidth,h=tip.offsetHeight;
+    const left=Math.max(8,Math.min(r.width-w-8,x+w+20<=r.width?x+12:x-w-12)),top=Math.max(8,Math.min(r.height-h-8,y-h/2));
+    tip.style.transform=`translate(${left}px,${top}px)`;
+    if(selected===null){void tip.offsetWidth;plot.classList.add('tracking')}selected=i;
+  };
+  plot.onpointerleave=()=>{cross.setAttribute('visibility','hidden');point.setAttribute('visibility','hidden');tip.hidden=true;selected=null;plot.classList.remove('tracking')};
+}
+
+function heatTip(e,item){
+  $("tooltip").textContent=`${item.date} · ${item.value === null ? "未记录" : "新增 "+item.value.toLocaleString()+" token"}`;
+  $("tooltip").hidden=false;const r=$("tooltip").getBoundingClientRect();
+  $("tooltip").style.left=Math.max(8,Math.min(innerWidth-r.width-8,e.clientX+12))+'px';
+  $("tooltip").style.top=Math.max(8,e.clientY-r.height-12)+'px';
+}
+
+function renderHeatmap(activity){
+  $("heat-grid").replaceChildren();$("terrain").replaceChildren();$("tooltip").hidden=true;
+  const colors=['#ebedf0','#a7f3d0','#6ee7b7','#34d399','#10b981'];
+  const values=new Map(activity.days.map(d=>[d.day,d.tokens]));
+  const localDay=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const today=new Date(),start=new Date(today.getFullYear(),today.getMonth(),today.getDate()-today.getDay()-51*7,12),end=localDay(today);
+  const days=Array.from({length:364},(_,i)=>{const d=new Date(start);d.setDate(start.getDate()+i);const date=localDay(d);return {date,value:activity.since && date>=activity.since && date<=end ? values.get(date)||0 : null}});
+  const max=Math.max(1,...days.map(d=>d.value||0)),halves=[];
+  for(let half=0;half<2;half++){const section=document.createElement('div');section.innerHTML='<div class="month-row"></div><div class="heat-weeks"></div>';$("heat-grid").append(section);halves.push(section)}
+  days.forEach((d,i)=>{
+    const half=Math.floor(i/182),week=Math.floor(i%182/7),section=halves[half],level=d.value?Math.max(1,Math.ceil(d.value/max*4)):0;
+    if(i%182===0||(d.date.slice(8)==='01'&&week<24)){const month=document.createElement('span');month.textContent=Number(d.date.slice(5,7))+'月';month.style.gridColumn=week+1;section.firstElementChild.append(month)}
+    const cell=document.createElement('button');cell.className='heat-cell';cell.style.background=colors[level];cell.classList.toggle('unrecorded',d.value===null);
+    cell.setAttribute('aria-label',`${d.date} ${d.value===null?'未记录':d.value+' token'}`);cell.onpointermove=e=>heatTip(e,d);cell.onpointerleave=()=>$("tooltip").hidden=true;section.lastElementChild.append(cell);
+    const bar=document.createElement('div');bar.className='column';bar.style.cssText=`grid-column:${week+1};grid-row:${half*8+i%7+1};--height:${3+(d.value||0)/max*48}px;--color:${colors[level]}`;
+    bar.innerHTML='<span class="top"></span><span class="front"></span><span class="side"></span>';bar.classList.toggle('unrecorded',d.value===null);
+    bar.onpointermove=e=>heatTip(e,d);bar.onpointerleave=()=>$("tooltip").hidden=true;$("terrain").append(bar);
   });
+  $("heat-period").textContent="过去 52 周";
+  $("growth-note").textContent=activity.since?`新增 token 从 ${activity.since} 开始记录，斜纹日期尚无记录。`:"选择知识库后，开始记录每天新增的内容。";
 }
 
 async function refreshOverview() {
   const result = await call("overview", overviewPeriod);
-  if (result.period === overviewPeriod) renderMetrics(result.metrics);
+  if (result.period === overviewPeriod) { renderMetrics(result.metrics); renderHeatmap(result.activity); }
 }
 
 document.querySelectorAll("[data-page]").forEach((button) => {
@@ -170,12 +192,15 @@ $("choose-vault").addEventListener("click", (event) => action(event.currentTarge
   updatePromptAvailability();
 }));
 
+$("open-setup-guide").addEventListener("click", () => $("setup-guide").showModal());
+$("close-setup-guide").addEventListener("click", () => $("setup-guide").close());
+
 $("vault-path").addEventListener("input", updatePromptAvailability);
 
 document.querySelectorAll("[data-copy-vault]").forEach((button) => {
   button.addEventListener("click", () => action(button, async () => {
     await navigator.clipboard.writeText(vaultPath);
-    toast("Vault 路径已复制");
+    toast("知识库地址已复制");
   }));
 });
 
@@ -215,7 +240,7 @@ document.querySelectorAll("[data-copy-agent]").forEach((button) => {
   }));
 });
 
-window.addEventListener("pywebviewready", () => {
+window.addEventListener("desktopready", () => {
   action(null, () => refresh(true));
   setInterval(() => action(null, () => refresh()), 30000);
 });
@@ -266,7 +291,7 @@ function editProject(project) {
   projectPaths = [...(project?.paths || [])];
   $("project-name").value = project?.name || "";
   $("project-form-title").textContent = project ? `编辑项目：${project.name}` : "新增项目";
-  $("project-form-description").textContent = project ? "仅修改此项目，其他项目不受影响。" : "创建一个独立项目，可关联多个工作目录。";
+  $("project-form-description").textContent = project ? "修改名称或关联的工作文件夹。" : "为项目选择一个或多个工作文件夹。";
   $("save-project").textContent = project ? "保存修改" : "创建项目";
   renderProjectPaths();
 }
@@ -279,7 +304,7 @@ async function refreshProjects() {
   if (!result.projects.length) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
-    empty.textContent = vaultReady ? "还没有项目。点击右上角“新增项目”，可依次添加多个项目。" : "请先在设置中保存知识库路径。";
+    empty.textContent = vaultReady ? "还没有项目，点击“新增项目”开始。" : "请先在设置中保存知识库路径。";
     $("project-list").append(empty);
   }
   for (const project of result.projects) {
@@ -306,7 +331,7 @@ async function refreshProjects() {
     if (!project.paths.length) {
       const note = document.createElement("p");
       note.className = "hint";
-      note.textContent = "未配置工作目录；保留历史资料，不参与项目匹配。";
+      note.textContent = "尚未关联工作文件夹。";
       card.append(note);
     }
     for (const path of project.paths) {
@@ -348,3 +373,30 @@ $("project-form").addEventListener("submit", (event) => {
     toast(result.message);
   });
 });
+
+let angle=-18,tilt=58,scale=1,auto=false,drag=null;
+let shownAngle=angle,shownTilt=tilt,shownScale=scale,speed=0,pending=0,last=0;
+
+function transform(){if(!pending){last=performance.now();pending=requestAnimationFrame(frame)}}
+function frame(at){
+  const dt=Math.min(at-last,64),mix=window.matchMedia('(prefers-reduced-motion:reduce)').matches?1:1-Math.exp(-dt/55);
+  last=at;
+  const targetSpeed=auto&&!drag&&!$('heat3d').hidden ? .008 : 0;
+  speed+=(targetSpeed-speed)*(window.matchMedia('(prefers-reduced-motion:reduce)').matches?1:1-Math.exp(-dt/180));
+  if(!drag&&!$('heat3d').hidden)angle+=speed*dt;
+  shownAngle+=(angle-shownAngle)*mix;shownTilt+=(tilt-shownTilt)*mix;shownScale+=(scale-shownScale)*mix;
+  const moving=Math.abs(angle-shownAngle)>.01||Math.abs(tilt-shownTilt)>.01||Math.abs(scale-shownScale)>.0001||Math.abs(speed)>.00001;
+  if(!moving){shownAngle=angle;shownTilt=tilt;shownScale=scale;speed=0}
+  $('terrain').style.transform=`scale(${shownScale}) rotateX(${shownTilt}deg) rotateZ(${shownAngle}deg)`;
+  pending=moving||targetSpeed?requestAnimationFrame(frame):0;
+}
+for(const view of ['2d','3d'])$('view-'+view).onclick=()=>{
+  $('heat2d').hidden=view!=='2d';$('heat3d').hidden=view!=='3d';$('rotate-controls').hidden=view!=='3d';
+  $('view-2d').classList.toggle('active',view==='2d');$('view-3d').classList.toggle('active',view==='3d');$('tooltip').hidden=true;transform();
+};
+$('heat3d').onpointerdown=e=>{drag={x:e.clientX,y:e.clientY,angle,tilt};$('heat3d').setPointerCapture(e.pointerId);transform()};
+$('heat3d').onpointermove=e=>{if(drag){angle=drag.angle+(e.clientX-drag.x)*.4;tilt=Math.max(15,Math.min(80,drag.tilt-(e.clientY-drag.y)*.3));transform();$('tooltip').hidden=true}};
+$('heat3d').onpointerup=$('heat3d').onpointercancel=()=>{drag=null;transform()};
+$('heat3d').onwheel=e=>{e.preventDefault();scale=Math.max(.5,Math.min(1.7,scale-e.deltaY*.001));transform()};
+$('rotate').onclick=()=>{auto=!auto;$('rotate').textContent=auto?'停止旋转':'自动旋转';transform()};
+$('reset').onclick=()=>{angle=-18;tilt=58;scale=1;auto=false;speed=0;$('rotate').textContent='自动旋转';transform()};

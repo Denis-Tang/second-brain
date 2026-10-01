@@ -31,3 +31,7 @@ dist/
 
 # Local handoff notes.
 /*交接*.md
+
+# Native desktop build output.
+desktop/bin/
+desktop/obj/

@@ -7,6 +7,7 @@ import sqlite3
 import os
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 from uuid import uuid4
 
@@ -57,6 +58,7 @@ class Vault:
             CREATE TABLE IF NOT EXISTS observations (
                 at TEXT NOT NULL, sessions INTEGER, memories INTEGER, estimated_tokens INTEGER
             );
+            CREATE TABLE IF NOT EXISTS daily_writes (day TEXT PRIMARY KEY, tokens INTEGER NOT NULL);
         """)
         try:
             with con:
@@ -205,8 +207,18 @@ class Vault:
         if not info:
             if not normalized:
                 raise ValueError("新增项目至少选择一个文件夹")
-            if (self.root / "项目" / name).exists():
+            directory = self.root / "项目" / name
+            archive = directory / "立项归档.md"
+            card = directory / "项目.md"
+            if archive.is_file() and not card.exists():
+                metadata, _ = self.read(archive)
+                if metadata.get("shared_brain") is True and metadata.get("project_id"):
+                    project_id = metadata["project_id"]
+                    archive.rename(card)
+                    info = {"path": card.relative_to(self.root).as_posix()}
+            if not info and directory.exists():
                 raise ValueError("项目文件夹已存在，请关联已有项目")
+        if not info:
             project_id = uuid4().hex
             self.write(f"项目/{name}/项目.md", {"kind": "project", "title": name, "project": project_id,
                        "project_id": project_id, "status": "active", "goal": "", "next_actions": []}, "尚未保存进度。")
@@ -313,8 +325,11 @@ class Vault:
 
     def refresh(self):
         with self.connect() as con:
+            tracking = con.execute("SELECT value FROM state WHERE key='daily_writes_since'").fetchone()
+            day = datetime.fromisoformat(now()).astimezone().date().isoformat()
+            added_tokens = 0
             found = set()
-            previous = {row["path"]: row["hash"] for row in con.execute("SELECT path,hash FROM notes")}
+            previous = {row["path"]: row for row in con.execute("SELECT path,hash,body FROM notes")}
             for folder in ("项目", "知识", "资料", "会话总结", "技能"):
                 for path in (self.root / folder).rglob("*.md"):
                     if path == self.root / "知识" / "全局提示词.md":
@@ -322,12 +337,19 @@ class Vault:
                     relative = path.relative_to(self.path).as_posix()
                     text = path.read_text(encoding="utf-8-sig")
                     digest = fingerprint(text)
-                    if previous.get(relative) == digest:
+                    old = previous.get(relative)
+                    if old is not None and old["hash"] == digest:
                         found.add(relative)
                         continue
                     metadata, body = self.read(path, text)
                     if metadata.get("shared_brain") is not True:
                         continue
+                    if tracking:
+                        before = old["body"] if old is not None else ""
+                        added = "".join(body[j:k] for tag, _, _, j, k in SequenceMatcher(None, before, body).get_opcodes()
+                                        if tag in {"insert", "replace"})
+                        ascii_count = sum(char.isascii() for char in added.strip())
+                        added_tokens += (ascii_count + 3) // 4 + len(added.strip()) - ascii_count
                     found.add(relative)
                     con.execute("INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?)", (
                         relative, metadata.get("title", path.stem), metadata.get("kind", "memory"),
@@ -350,6 +372,11 @@ class Vault:
             totals = (sessions, memories, tokens)
             if latest is None or tuple(latest) != totals:
                 con.execute("INSERT INTO observations VALUES (?,?,?,?)", (now(), *totals))
+            if not tracking:
+                con.execute("INSERT INTO state VALUES ('daily_writes_since',?)", (json.dumps(day),))
+            elif added_tokens:
+                con.execute("INSERT INTO daily_writes VALUES (?,?) ON CONFLICT(day) DO UPDATE SET tokens=tokens+excluded.tokens",
+                            (day, added_tokens))
 
     def overview(self, period: str = "24h") -> dict:
         windows = {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30)}
@@ -360,14 +387,16 @@ class Vault:
         start = end - windows[period]
         with self.connect() as con:
             earlier = con.execute("SELECT * FROM observations WHERE at<? ORDER BY at DESC,rowid DESC LIMIT 1",
-                                  (start.isoformat(timespec="seconds"),)).fetchone()
+                                  (start.isoformat(),)).fetchone()
             rows = con.execute("SELECT * FROM observations WHERE at>=? AND at<=? ORDER BY at,rowid",
-                               (start.isoformat(timespec="seconds"), end.isoformat(timespec="seconds"))).fetchall()
+                               (start.isoformat(), end.isoformat())).fetchall()
             current = dict(con.execute("SELECT * FROM observations ORDER BY rowid DESC LIMIT 1").fetchone())
+            since = json.loads(con.execute("SELECT value FROM state WHERE key='daily_writes_since'").fetchone()[0])
+            daily = [dict(row) for row in con.execute("SELECT day,tokens FROM daily_writes ORDER BY day")]
         # Carry an already observed value to the window edge; never backfill before the baseline.
         first = dict(earlier) if earlier else dict(rows[0])
         if earlier:
-            first["at"] = start.isoformat(timespec="seconds")
+            first["at"] = start.isoformat()
         samples = [first]
         buckets = {}
         seconds_per_bucket = windows[period].total_seconds() / 119
@@ -375,11 +404,11 @@ class Vault:
             bucket = min(118, int((datetime.fromisoformat(row["at"]) - start).total_seconds() / seconds_per_bucket))
             buckets[bucket] = dict(row)
         samples.extend(buckets.values())
-        if samples[-1]["at"] != end.isoformat(timespec="seconds"):
-            samples.append({**current, "at": end.isoformat(timespec="seconds")})
+        if samples[-1]["at"] != end.isoformat():
+            samples.append({**current, "at": end.isoformat()})
         metrics = [("sessions", "会话总结", "篇"), ("memories", "知识与技能", "条"),
                    ("estimated_tokens", "正文估算 token", "tokens")]
-        return {"period": period, "metrics": [
+        return {"period": period, "activity": {"since": since, "days": daily}, "metrics": [
             {"key": key, "label": label, "unit": unit, "current": current[key],
              "points": [{"at": sample["at"], "value": sample[key]} for sample in samples]}
             for key, label, unit in metrics

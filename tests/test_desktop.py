@@ -44,9 +44,9 @@ const get = id => {
 let submitted;
 const settings = {vault_path: 'D:/vault', base_url: 'https://api.deepseek.com', model: 'deepseek-flash', maintenance_time: '03:00'};
 const context = {document: {getElementById: get, querySelectorAll: () => []},
-  window: {addEventListener() {}, pywebview: {api: {
+  window: {addEventListener() {}, desktop: {
     configure: async values => {submitted = values; return {message: 'saved'};},
-    status: async () => ({settings, ready: false})}}},
+    status: async () => ({settings, ready: false})}},
   setTimeout() {}, clearTimeout() {}};
 vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 get('vault-path').value = ' D:/vault ';
@@ -95,21 +95,24 @@ const get = id => {
 };
 let state = {ready: true, global_prompt: '旧库提示词', settings: {
   vault_path: 'D:/old', base_url: 'https://api.example.com', model: 'example', maintenance_time: '02:00'}};
-const context = {document: {getElementById: get, querySelectorAll: () => []},
-  window: {addEventListener() {}, pywebview: {api: {
+const copyButtons = ['data-copy-vault', 'data-copy-agent'];
+const context = {document: {getElementById: get,
+  querySelectorAll: selector => copyButtons.filter(name => selector.includes(name)).map(get)},
+  window: {addEventListener() {}, desktop: {
     status: async () => state,
     save_global_prompt: async text => {saves.push(text); return {message: 'saved', global_prompt: text};},
     configure: async values => {
       configurations.push(values);
       state = {ready: true, settings: values, global_prompt: '新库提示词'};
       return {message: 'configured'};
-    }}}}, setTimeout() {}, clearTimeout() {}};
+    }}}, setTimeout() {}, clearTimeout() {}};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 const settle = () => new Promise(resolve => setImmediate(resolve));
 (async () => {
   await vm.runInContext("activePage = 'settings'; refresh(true)", context);
   assert.equal(get('global-prompt').value, '旧库提示词');
+  for (const name of copyButtons) assert.equal(get(name).disabled, false);
   get('global-prompt').value = '我编辑的提示词';
   get('global-prompt-form').submit({preventDefault() {}, submitter: get('save-global-prompt')});
   await settle();
@@ -119,12 +122,16 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   get('vault-path').input();
   assert.equal(get('global-prompt').disabled, true);
   assert.equal(get('save-global-prompt').disabled, true);
+  for (const name of copyButtons) assert.equal(get(name).disabled, true);
+  await vm.runInContext('refresh()', context);
+  for (const name of copyButtons) assert.equal(get(name).disabled, true);
   get('settings-form').submit({preventDefault() {}, submitter: null});
   await settle();
   assert.equal(configurations[0].vault_path, 'D:/new');
   assert.equal('global_prompt' in configurations[0], false);
   assert.equal(get('global-prompt').value, '新库提示词');
   assert.equal(get('save-global-prompt').disabled, false);
+  for (const name of copyButtons) assert.equal(get(name).disabled, false);
   assert.deepEqual(saves, ['我编辑的提示词']);
 })().catch(error => {console.error(error); process.exitCode = 1;});
 '''
@@ -144,7 +151,7 @@ const element = () => ({value: '', dataset: {}, children: [], classList: {toggle
   replaceChildren() {this.children = [];}, focus() {}, showModal() {this.open = true;}, close() {this.open = false;}});
 const get = id => {if (!elements.has(id)) elements.set(id, element()); return elements.get(id);};
 const context = {document: {getElementById: get, querySelectorAll: () => [], createElement: element},
-  window: {addEventListener() {}, pywebview: {api: {
+  window: {addEventListener() {}, desktop: {
     projects: async () => ({projects}),
     delete_project: async id => {
       deletions.push(id);
@@ -156,7 +163,7 @@ const context = {document: {getElementById: get, querySelectorAll: () => [], cre
       if (id) projects.find(p => p.project_id === id).name = name;
       else projects.push({project_id: String(projects.length + 1), name, paths, directory: name});
       return {message: 'saved'};
-    }}}}, navigator: {clipboard: {writeText: async text => copied.push(text)}}, setTimeout() {}, clearTimeout() {}};
+    }}}, navigator: {clipboard: {writeText: async text => copied.push(text)}}, setTimeout() {}, clearTimeout() {}};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 vm.runInContext('vaultReady = true', context);
@@ -221,59 +228,32 @@ def test_scheduler_catches_up_after_late_start_and_runs_once(monkeypatch):
     assert calls == [1]
 
 
-def test_window_close_hides_and_tray_exit_stops_worker(monkeypatch):
-    class ClosingEvent:
-        def __iadd__(self, callback):
-            self.callback = callback
+def test_native_host_bridge_stops_worker_on_exit(tmp_path, monkeypatch):
+    import io
+    stopped = threading.Event()
+    reply = io.StringIO()
+    class Process:
+        def __init__(self, command, **kwargs):
+            assert command[0].endswith("SharedBrain.Desktop.exe")
+            assert command[-1] == str(tmp_path / "webview")
+            self.stdout = io.StringIO('{"id":1,"method":"status","args":[]}\n')
+            self.stdin = reply
+        def __enter__(self):
             return self
-
-    closing = ClosingEvent()
-    calls = []
-    worker_stopped = threading.Event()
-    window = SimpleNamespace(
-        events=SimpleNamespace(closing=closing),
-        hide=lambda: calls.append("hide"),
-        show=lambda: calls.append("show"),
-        restore=lambda: calls.append("restore"),
-        destroy=lambda: calls.append(("destroy", closing.callback())),
-    )
-
-    class Icon:
-        def __init__(self, *args, menu):
-            self.menu = menu
-            self.stopped = threading.Event()
-            icons.append(self)
-
-        def run(self):
-            self.stopped.wait()
-
-        def stop(self):
-            self.stopped.set()
-
-    icons = []
-
-    def start(*, icon):
-        assert Path(icon).name == "icon.ico" and Path(icon).is_file()
-        assert closing.callback() is False
-        icons[0].menu[0].action()
-        icons[0].menu[1].action(icons[0], None)
-
+        def __exit__(self, *args):
+            return False
+    monkeypatch.setattr(desktop.subprocess, "Popen", Process)
+    monkeypatch.setattr(desktop, "BrainService", lambda home: SimpleNamespace(settings=SimpleNamespace(home=home), status=lambda: {"ready": False}))
     def worker(api, stop):
         stop.wait()
-        worker_stopped.set()
-
-    monkeypatch.setattr(desktop, "BrainService", lambda home: object())
+        stopped.set()
     monkeypatch.setattr(desktop, "_maintenance_loop", worker)
-    monkeypatch.setitem(sys.modules, "webview", SimpleNamespace(create_window=lambda *args, **kwargs: window, start=start))
-    monkeypatch.setitem(sys.modules, "pystray", SimpleNamespace(
-        Icon=Icon,
-        Menu=lambda *items: items,
-        MenuItem=lambda label, action, **kwargs: SimpleNamespace(action=action),
-    ))
-    desktop.run()
-    assert calls == ["hide", "show", "restore", ("destroy", True)]
-    assert worker_stopped.is_set()
-    assert icons[0].stopped.is_set()
+    original_close = reply.close
+    reply.close = lambda: None
+    desktop._run_desktop(tmp_path)
+    assert json.loads(reply.getvalue()) == {"id": 1, "result": {"ready": False}}
+    assert stopped.is_set()
+    original_close()
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows desktop singleton")
@@ -291,8 +271,8 @@ def test_duplicate_desktop_exits_and_tray_exit_allows_restart(tmp_path, monkeypa
     assert calls == [None, None]
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows legacy desktop window")
-def test_legacy_desktop_window_is_restored_without_starting_another(monkeypatch):
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows desktop activation")
+def test_hidden_desktop_window_is_restored_without_starting_another(monkeypatch):
     import ctypes
     from ctypes import wintypes
 

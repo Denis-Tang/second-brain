@@ -162,6 +162,46 @@ def test_delete_project_only_removes_registration_and_binding(tmp_path):
     assert service.save(context, progress="不能再写回旧项目")["project"] == ""
 
 
+def test_recreate_deleted_project_preserves_identity_and_history(tmp_path):
+    service, context, started = setup(tmp_path)
+    saved = service.save(context, summary="历史总结", progress="已有进度")
+    directory = Path(started["project_directory"])
+    handwritten = directory / "用户原始资料.md"
+    handwritten.write_text("保留原始资料", encoding="utf-8")
+    vault = service._vault()
+    _, original_body = vault.read(directory / "项目.md")
+    summary = vault.root / saved["summary"]["path"]
+    original_summary = summary.read_bytes()
+    for attempt in range(2):
+        service.delete_project(started["project"])
+        reopened = BrainService(service.settings.home)
+        restored = reopened.configure_project("示例", [str(tmp_path / "workspace")])["project"]
+        assert restored["project_id"] == started["project"]
+        assert restored["directory"] == str(directory)
+        assert not (directory / "立项归档.md").exists()
+        assert handwritten.read_text(encoding="utf-8") == "保留原始资料"
+        assert summary.read_bytes() == original_summary
+        assert vault.read(directory / "项目.md")[1] == original_body
+        boot = reopened.bootstrap(str(tmp_path / "workspace"), f"restored-{attempt}", "Claude")
+        assert boot["project"] == started["project"]
+        assert boot["project_context"]["progress"] == "已有进度"
+        assert len(reopened.projects()["projects"]) == 1
+
+
+def test_recreate_does_not_replace_existing_user_project_directory(tmp_path):
+    service, _, _ = setup(tmp_path)
+    directory = tmp_path / "vault" / "项目" / "手写项目"
+    directory.mkdir()
+    original = directory / "立项归档.md"
+    original.write_text("用户手写的归档", encoding="utf-8")
+    workspace = tmp_path / "other"
+    workspace.mkdir()
+    with pytest.raises(ValueError, match="项目文件夹已存在"):
+        service.configure_project("手写项目", [str(workspace)])
+    assert original.read_text(encoding="utf-8") == "用户手写的归档"
+    assert not (directory / "项目.md").exists()
+
+
 def test_errors_scope_outcome_feedback_and_separate_storage(tmp_path):
     service, context, started = setup(tmp_path)
     error = {"target": "https://example.com/a?token=private", "method": "HTTP", "environment": {"tool": "v1"}, "symptom": "timeout", "impact": "high"}

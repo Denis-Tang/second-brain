@@ -2,13 +2,15 @@
 
 面向干净 Obsidian 仓库的本地第二大脑。Windows 桌面提供总观、项目配置、设置三页；Agent 通过 MCP 启动、检索、保存和反馈。无需复制旧 DSH，也不依赖开发者电脑路径。
 
-当前源码与 Windows 分发包版本为 **0.4.1**。以下操作对应 0.4.1，请从 [GitHub Releases](https://github.com/Denis-Tang/second-brain/releases/tag/v0.4.1) 下载对应版本。
+当前源码版本为 **0.4.1**，桌面界面已更新为亚克力窗口。已发布版本见 [GitHub Releases](https://github.com/Denis-Tang/second-brain/releases/latest)。
 
 ## 开始使用
 
-完整解压 `shared-brain-0.4.1-windows-x64.zip` 后运行 `shared-brain/shared-brain.exe`，保留同目录 `_internal`、`integrations` 和 `runtime`。Windows x64 需要 WebView2 Runtime；分发包包含 Python 与 Node.js，无需另装。已发布版本见 [GitHub Releases](https://github.com/Denis-Tang/second-brain/releases/latest)。
+完整解压 `shared-brain-0.4.1-windows-x64.zip` 后运行 `shared-brain/shared-brain.exe`，保留同目录 `_internal`、`desktop`、`integrations` 和 `runtime`。Windows 11 x64 需要 WebView2 Runtime；分发包包含 Python、.NET 桌面运行时与 Node.js，无需另装。已发布版本见 [GitHub Releases](https://github.com/Denis-Tang/second-brain/releases/latest)。
 
-首次在设置选择私人知识库路径，点击“保存设置”统一保存路径和维护配置，再复制内置提示词给 Agent。程序自动创建知识库基础目录；项目归属在“项目配置”页面管理，由 Agent 合并 MCP 与薄入口、按实际宿主支持配置 Hook。知识库应放在源码目录之外。
+首次使用可点击设置页右上角“本地工作区”下方的“配置引导”，按顺序选择知识库、接入 Agent、按需添加项目，并了解可选设置。
+
+首次在设置选择私人知识库路径，点击“保存设置”统一保存路径和维护配置，再复制内置提示词给 Agent。提示词使用已保存的 Vault 路径；路径修改但未保存时不能复制。第二个及后续 Agent 复用同一 Vault 和 home，只补接入配置，不重新初始化或重建已有架构。程序自动补齐知识库基础目录；项目归属在“项目配置”页面管理，由 Agent 合并 MCP 与薄入口、按实际宿主支持配置 Hook。知识库应放在源码目录之外。
 
 本仓库发布 Shared Brain 程序源码；私人知识库、应用状态、宿主配置、`build` 和 `.venv` 不随源码或下载包发布。Windows 可运行包通过 Releases 提供，不放入 Git 历史。
 
@@ -36,6 +38,8 @@
 “项目配置”按创建时间从新到旧展示全部项目和数量，编辑或改名不改变顺序；右上角“新增项目”打开独立创建窗口。填写名称并通过“添加文件夹”选择一个或多个已有工作目录；“创建项目”保存后返回列表，可再次点击“新增项目”添加其他项目。每个项目的“编辑”只修改该项目，与新增入口分开。保存后自动创建 `项目/<名称>/项目.md` 和 `会话索引.md`；任务、决策按需创建。一个目录只能配置给一个项目；父子目录配置到不同项目时，子目录及其后代归更具体的项目。支持复制项目名称；“复制路径”仅放在具体工作目录后，每次只复制该条路径；不自动创建各 Agent 宿主的工作区。
 
 列表包含原有项目，可直接编辑并补充路径。允许移除全部路径，项目卡与历史总结保留，项目不再参与匹配。改名仅更新显示名称，保留 ID、原资料目录和已有链接。点击“删除项目”先弹出确认框，仅“确认删除”执行删除；取消或按 Esc 不作修改。删除移除立项和路径绑定，将项目卡原样转存为同目录 `立项归档.md`；会话索引、总结、任务、决策、用户原始资料和工作目录保留，不再参与原项目归属。工作目录搬迁后在此页修改路径；同名目录与 Git remote 不参与判定。
+
+删除后用原资料目录名称新增项目，会恢复该目录中的立项归档及原项目 ID，并重新绑定所选工作路径，保留历史进度和资料；可反复删除、恢复。没有程序生成的立项归档时，不覆盖同名的用户资料目录。
 
 bootstrap 返回 `project_directory`（项目资料绝对路径），独立会话为空。Agent 使用 save 更新项目卡、任务、决策与总结索引；项目经验放在项目的 `知识/`。所有会话发生安装、卸载、工具配置、skills、模型及电脑环境变更时，通过 `changes` 写公共独立知识池；普通源码修改留在项目记录。对象用稳定名称标识，保存实际位置、最新状态、验证和变更历史。配置变更后重新 bootstrap；save 和失败 Hook 也重新匹配。旧知识、技能、资料与历史总结不迁移或改写；旧独立总结、平铺经验和导入资料不进入新版维护队列。
 
@@ -120,7 +124,11 @@ Python 3.11+；Windows 桌面依赖系统 WebView2。分发包内含 Python。�
 
 英文使用随包附带的 Noto Serif（SIL OFL 1.1）；中文标题使用系统黑体，其余中文使用系统幼圆。
 
-总观显示项目会话总结数、知识与技能（含公共对象）数量及正文估算 token 的真实增长历史；草稿和全局提示词不计入。统一切换24小时、7天、30天；正文规模不等于API用量，费用在设置页单独显示。
+总观显示会话总结、知识与技能以及正文估算 token；点击数字卡片切换折线图，可查看 24 小时、7 天、30 天的真实历史。每日知识积累以 2D/3D 热力图显示过去 52 周，宽窗口与折线图并排，窄窗口自动上下排列。
+
+每日 token 按索引中正文新增片段估算，删除内容不抵消新增量；草稿与全局提示词不计入。首次升级仅建立基线，不把已有正文算到今天，也不补造历史；斜纹表示未记录。关闭期间的修改在下次读取时计入当天。它不是模型 API 用量，费用在设置页单独显示。
+
+桌面只保留 WPF/WebView2 亚克力窗口，默认页面缩放 175%，可用 Ctrl＋／Ctrl－调整。关闭窗口隐藏到托盘，托盘“退出”才结束程序与夜间维护。
 
 ```powershell
 python -m pytest
@@ -128,7 +136,7 @@ python -m pip install -e ".[build]"
 pwsh -NoProfile -File scripts/build.ps1
 ```
 
-构建机器需要 Python 与 Node.js；脚本将当前 Node.js 运行文件及同版本许可声明放入分发包。默认输出在 `dist/shared-brain`，可用 `scripts/build.ps1 -OutputDirectory dist/v0.4.1` 构建到独立目录，避免覆盖仍在运行的程序。应用标识、窗口、托盘及 EXE 统一使用 `web/icon.svg` 及其 PNG/ICO 版本，四角透明；ICO 包含 16–256 像素的 9 种尺寸。Windows EXE 使用无控制台模式，桌面启动不创建命令行窗口；同一 EXE 恢复宿主传入的标准输入输出管道，继续支持 MCP、Hook 和命令行调用，Hook 子进程也使用 windowsHide。宿主适配测试使用已构建包内的 Node.js、脚本和 EXE；未构建时该项会跳过。
+构建机器需要 Python、Node.js 与 .NET 8 SDK；脚本将当前 Node.js 运行文件及同版本许可声明放入分发包。默认输出在 `dist/shared-brain`，可用 `scripts/build.ps1 -OutputDirectory dist/v0.4.1` 构建到独立目录，避免覆盖仍在运行的程序。应用标识、窗口、托盘及 EXE 统一使用 `web/icon.svg` 及其 PNG/ICO 版本，四角透明；ICO 包含 16–256 像素的 9 种尺寸。Windows EXE 使用无控制台模式，桌面启动不创建命令行窗口；同一 EXE 恢复宿主传入的标准输入输出管道，继续支持 MCP、Hook 和命令行调用，Hook 子进程也使用 windowsHide。宿主适配测试使用已构建包内的 Node.js、脚本和 EXE；未构建时该项会跳过。
 
 0.4.1 的本地测试覆盖显式项目多路径配置/搬迁、嵌套目录归属、独立会话、总结与项目索引、结构化错误与成功反馈、Hook一次提醒、MCP工具、增量维护/技能生成及预算；四种宿主适配在清空 PATH 后使用包内 Node.js 验证。模型测试使用模拟HTTP响应，不证明真实提炼质量；真实供应商质量、收费及具体宿主Hook需启用后验证。
 

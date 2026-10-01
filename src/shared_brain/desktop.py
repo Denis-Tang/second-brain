@@ -6,6 +6,9 @@ from datetime import datetime
 from pathlib import Path
 import ctypes
 import os
+import json
+import subprocess
+import sys
 import threading
 
 from .service import BrainService
@@ -14,7 +17,6 @@ from .service import BrainService
 class DesktopAPI:
     def __init__(self, service: BrainService):
         self._service = service
-        self._window = None
         self._background_error = ""
 
     def _call(self, method, *args):
@@ -56,13 +58,6 @@ class DesktopAPI:
 
     def delete_project(self, project_id):
         return self._call(self._service.delete_project, project_id)
-
-    def choose_vault(self):
-        import webview
-
-        paths = self._window.create_file_dialog(webview.FOLDER_DIALOG)
-        return {"path": paths[0] if paths else ""}
-
 
 def _maintenance_loop(api: DesktopAPI, stop: threading.Event):
     ran_on = None
@@ -115,61 +110,23 @@ def run(home: Path | None = None):
 
 
 def _run_desktop(home: Path | None = None):
-    import pystray
-    import webview
-    from PIL import Image
-
     service = BrainService(home)
     api = DesktopAPI(service)
     stop = threading.Event()
-    window = webview.create_window(
-        "Shared Brain",
-        str(Path(__file__).parent / "web" / "index.html"),
-        js_api=api,
-        width=1120,
-        height=780,
-        min_size=(860, 620),
-        background_color="#f5f7fa",
-        text_select=True,
-    )
-    api._window = window
-
-    def closing():
-        if stop.is_set():
-            return True
-        window.hide()
-        return False
-
-    def show_window(*_):
-        window.show()
-        window.restore()
-
-    def quit_app(icon, _item):
-        stop.set()
-        icon.stop()
-        window.destroy()
-
     assets = Path(__file__).parent / "web"
-    with Image.open(assets / "icon.png") as source:
-        icon_image = source.resize((64, 64), Image.Resampling.LANCZOS)
-    tray = pystray.Icon(
-        "shared-brain",
-        icon_image,
-        "Shared Brain · 关闭窗口后仍在托盘运行",
-        menu=pystray.Menu(
-            pystray.MenuItem("显示 Shared Brain", show_window, default=True),
-            pystray.MenuItem("退出", quit_app),
-        ),
-    )
-    window.events.closing += closing
+    root = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[2] / "build"
+    host = root / "desktop" / "SharedBrain.Desktop.exe"
     worker = threading.Thread(target=_maintenance_loop, args=(api, stop), daemon=True)
-    tray_thread = threading.Thread(target=tray.run, daemon=True)
-    worker.start()
-    tray_thread.start()
-    try:
-        webview.start(icon=str(assets / "icon.ico"))
-    finally:
-        stop.set()
-        tray.stop()
-        worker.join(timeout=2)
-        tray_thread.join(timeout=2)
+    with subprocess.Popen([str(host), str(assets), str(service.settings.home / "webview")],
+                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8") as process:
+        worker.start()
+        try:
+            for line in process.stdout:
+                request = json.loads(line)
+                result = getattr(api, request["method"])(*request["args"])
+                process.stdin.write(json.dumps({"id": request["id"], "result": result}, ensure_ascii=False) + "\n")
+                process.stdin.flush()
+        finally:
+            stop.set()
+            process.stdin.close()
+            worker.join(timeout=2)

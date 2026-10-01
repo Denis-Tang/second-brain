@@ -5,6 +5,9 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location -LiteralPath $projectRoot
 try {
     New-Item -ItemType Directory -Path build -Force | Out-Null
+    dotnet publish desktop/SharedBrain.Desktop.csproj -c Release -r win-x64 `
+        --self-contained true -o build/desktop --nologo -v:q
+    if ($LASTEXITCODE -ne 0) { throw "Desktop host build failed with exit code $LASTEXITCODE" }
     $launcher = Join-Path $projectRoot 'build/launcher.py'
     $iconPath = Join-Path $projectRoot 'src/shared_brain/web/icon.ico'
     Set-Content -LiteralPath $launcher -Encoding utf8NoBOM -Value @'
@@ -34,12 +37,12 @@ if __name__ == "__main__":
     python -m PyInstaller --noconfirm --onedir --windowed `
         --distpath $OutputDirectory --icon $iconPath `
         --name shared-brain --paths src --specpath build --workpath build/pyinstaller `
-        --collect-data shared_brain --collect-all webview `
-        --hidden-import keyring.backends.Windows --hidden-import pystray._win32 `
+        --collect-data shared_brain --hidden-import keyring.backends.Windows `
         $launcher
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
     $packageDirectory = Join-Path $OutputDirectory 'shared-brain'
-    Copy-Item -LiteralPath @('README.md', 'LICENSE') -Destination $packageDirectory
+    Copy-Item -LiteralPath @('README.md', 'LICENSE', 'THIRD-PARTY-NOTICES.txt') -Destination $packageDirectory
+    Copy-Item -LiteralPath 'build/desktop' -Destination $packageDirectory -Recurse -Force
     $integrationDirectory = Join-Path $packageDirectory 'integrations'
     New-Item -ItemType Directory -Path $integrationDirectory -Force | Out-Null
     Copy-Item -Path 'integrations/*.mjs' -Destination $integrationDirectory

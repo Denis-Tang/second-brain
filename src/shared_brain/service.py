@@ -52,14 +52,14 @@ class BrainService:
 
     def initialize(self, vault_path: str) -> dict:
         settings = self.settings.update({"vault_path": vault_path})
-        self._vault()
+        self._vault().refresh()
         path = settings.vault_path
         return {"message": "知识库已就绪，可配置项目并复制提示词接入 Agent", "path": str(path)}
 
     def configure(self, values: dict, api_key: str | None = None) -> dict:
         self.settings.update(values, api_key)
         if self.settings.load().vault_path:
-            self._vault()
+            self._vault().refresh()
         return {"message": "设置已保存", **self.status()}
 
     def save_global_prompt(self, text: str) -> dict:
@@ -90,7 +90,7 @@ class BrainService:
         if period not in {"24h", "7d", "30d"}:
             raise ValueError("时间范围须为 24h、7d 或 30d")
         if not self.status()["ready"]:
-            return {"period": period, "metrics": [
+            return {"period": period, "activity": {"since": None, "days": []}, "metrics": [
                 {"key": key, "label": label, "unit": unit, "current": 0, "points": []}
                 for key, label, unit in (("sessions", "会话总结", "条"), ("memories", "知识与技能", "条"),
                                          ("estimated_tokens", "正文估算 token", "tokens"))
