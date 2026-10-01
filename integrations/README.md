@@ -10,7 +10,7 @@
 
 ## Codex / Claude Code
 
-0.4.1 分发包内置 Node.js，无需另装。将 MCP 以 `shared_brain` 注册到 Codex 的用户级 `config.toml` 或 Claude 的用户级 MCP 配置。配置必须显式带 `--home`，不要依赖 MCP 子进程继承环境变量。
+0.4.2 分发包内置 Node.js，无需另装。将 MCP 以 `shared_brain` 注册到 Codex 的用户级 `config.toml` 或 Claude 的用户级 MCP 配置。配置必须显式带 `--home`，不要依赖 MCP 子进程继承环境变量。
 
 命令 Hook 调用：
 
@@ -30,7 +30,7 @@ Codex 的新 Hook 必须通过宿主原生信任机制；只配置命令不代�
 
 在 PI-Desktop 的“设置 → MCP → 新增”中选择全局级、本地程序（stdio），填写：
 
-- 标识符：`shared_brain`；名称：`Shared Brain 0.4.1`。
+- 标识符：`shared_brain`；名称：`Shared Brain 0.4.2`。
 - 可执行文件：`<Shared Brain 安装目录>/shared-brain.exe`。
 - 参数：`--home "<应用数据目录>" mcp`，与 Shared Brain 桌面使用同一个 home。
 - 环境变量留空，不填写模型密钥；知识库路径继续由 Shared Brain 设置管理。
@@ -40,7 +40,7 @@ Codex 的新 Hook 必须通过宿主原生信任机制；只配置命令不代�
 **当前项目临时脱离：**
 
 1. 等当前回合结束。
-2. 打开“设置 → MCP”，在“选择项目”中选中要停用的项目，关闭 `Shared Brain 0.4.1` 右侧开关。
+2. 打开“设置 → MCP”，在“选择项目”中选中要停用的项目，关闭 `Shared Brain 0.4.2` 右侧开关。
 3. 在该项目中新建任务继续使用 PI-Desktop。旧聊天里已经读入的知识仍在聊天历史中。
 
 PI-Desktop 0.15.10 的开关按选中的项目生效；连接旁的“全局”标签表示配置的保存位置，不代表此开关会停用所有项目。恢复时选中同一项目，打开开关并新建任务。仅关闭 Shared Brain 桌面窗口不能代替停用连接。

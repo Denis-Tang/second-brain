@@ -6,6 +6,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <AssemblyName>SharedBrain.Desktop</AssemblyName>
+    <Version>0.4.2</Version>
     <ApplicationIcon>../src/shared_brain/web/icon.ico</ApplicationIcon>
     <DebugType>none</DebugType>
   </PropertyGroup>

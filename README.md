@@ -2,7 +2,7 @@
 
 面向干净 Obsidian 仓库的本地第二大脑。Windows 桌面提供总观、项目配置、设置三页；Agent 通过 MCP 启动、检索、保存和反馈。无需复制旧 DSH，也不依赖开发者电脑路径。
 
-当前源码版本为 **0.4.1**，桌面界面已更新为亚克力窗口。已发布版本见 [GitHub Releases](https://github.com/Denis-Tang/second-brain/releases/latest)。
+当前源码版本为 **0.4.2**，桌面界面已更新为亚克力窗口。已发布版本见 [GitHub Releases](https://github.com/Denis-Tang/second-brain/releases/latest)。
 
 ## 换新会话，继续同一个项目
 
@@ -29,7 +29,7 @@ Shared Brain 把目标、进度、决策和经验保存在可查看、可修改�
 
 ## 开始使用
 
-完整解压 `shared-brain-0.4.1-windows-x64.zip` 后运行 `shared-brain/shared-brain.exe`，保留同目录 `_internal`、`desktop`、`integrations` 和 `runtime`。Windows 11 x64 需要 WebView2 Runtime；分发包包含 Python、.NET 桌面运行时与 Node.js，无需另装。已发布版本见 [GitHub Releases](https://github.com/Denis-Tang/second-brain/releases/latest)。
+完整解压 `shared-brain-0.4.2-windows-x64.zip` 后运行 `shared-brain/shared-brain.exe`，保留同目录 `_internal`、`desktop`、`integrations` 和 `runtime`。Windows 11 x64 需要 WebView2 Runtime；分发包包含 Python、.NET 桌面运行时与 Node.js，无需另装。已发布版本见 [GitHub Releases](https://github.com/Denis-Tang/second-brain/releases/latest)。
 
 首次使用可点击设置页右上角“本地工作区”下方的“配置引导”，按顺序选择知识库、接入 Agent、按需添加项目，并了解可选设置。
 
@@ -106,7 +106,7 @@ Python 3.11+；Windows 桌面依赖系统 WebView2。分发包内含 Python。�
 
 ## Hook 接入
 
-0.4.1 分发包提供 Codex、Claude Code、旧 Oh-DSH 和 DeepSeek Harness 的生命周期适配，并包含 [宿主接入](integrations/README.md) 说明。内置提示词指向这些现成脚本；Codex / Claude 命令 Hook 使用包内 `runtime/node.exe`。已发布的 v0.4.0 ZIP 只包含 DeepSeek Harness 适配。不要直接把 Harness 插件用于旧 Oh-DSH。
+0.4.2 分发包提供 Codex、Claude Code、旧 Oh-DSH 和 DeepSeek Harness 的生命周期适配，并包含 [宿主接入](integrations/README.md) 说明。内置提示词指向这些现成脚本；Codex / Claude 命令 Hook 使用包内 `runtime/node.exe`。已发布的 v0.4.0 ZIP 只包含 DeepSeek Harness 适配。不要直接把 Harness 插件用于旧 Oh-DSH。
 
 内置提示词给出真实程序位置的 `shared-brain --home PATH hook` 命令。它从 stdin 接收一个 JSON 事件并输出一个 JSON 对象；已有适配按随包说明接入，其他宿主才需要按其文档映射事件/返回格式。程序不擅自安装 Hook。
 
@@ -161,9 +161,9 @@ python -m pip install -e ".[build]"
 pwsh -NoProfile -File scripts/build.ps1
 ```
 
-构建机器需要 Python、Node.js 与 .NET 8 SDK；脚本将当前 Node.js 运行文件及同版本许可声明放入分发包。默认输出在 `dist/shared-brain`，可用 `scripts/build.ps1 -OutputDirectory dist/v0.4.1` 构建到独立目录，避免覆盖仍在运行的程序。应用标识、窗口、托盘及 EXE 统一使用 `web/icon.svg` 及其 PNG/ICO 版本，四角透明；ICO 包含 16–256 像素的 9 种尺寸。Windows EXE 使用无控制台模式，桌面启动不创建命令行窗口；同一 EXE 恢复宿主传入的标准输入输出管道，继续支持 MCP、Hook 和命令行调用，Hook 子进程也使用 windowsHide。宿主适配测试使用已构建包内的 Node.js、脚本和 EXE；未构建时该项会跳过。
+构建机器需要 Python、Node.js 与 .NET 8 SDK；脚本将当前 Node.js 运行文件及同版本许可声明放入分发包。默认输出在 `dist/shared-brain`，可用 `scripts/build.ps1 -OutputDirectory dist/v0.4.2` 构建到独立目录，避免覆盖仍在运行的程序。应用标识、窗口、托盘及 EXE 统一使用 `web/icon.svg` 及其 PNG/ICO 版本，四角透明；ICO 包含 16–256 像素的 9 种尺寸。Windows EXE 使用无控制台模式，桌面启动不创建命令行窗口；同一 EXE 恢复宿主传入的标准输入输出管道，继续支持 MCP、Hook 和命令行调用，Hook 子进程也使用 windowsHide。宿主适配测试使用已构建包内的 Node.js、脚本和 EXE；未构建时该项会跳过。
 
-0.4.1 的本地测试覆盖显式项目多路径配置/搬迁、嵌套目录归属、独立会话、总结与项目索引、结构化错误与成功反馈、Hook一次提醒、MCP工具、增量维护/技能生成及预算；四种宿主适配在清空 PATH 后使用包内 Node.js 验证。维护模型接口测试使用模拟HTTP响应，不证明真实提炼质量；真实供应商质量、收费及具体宿主Hook需启用后验证。
+0.4.2 的本地测试覆盖显式项目多路径配置/搬迁、嵌套目录归属、独立会话、总结与项目索引、结构化错误与成功反馈、Hook一次提醒、MCP工具、增量维护/技能生成及预算；四种宿主适配在清空 PATH 后使用包内 Node.js 验证。维护模型接口测试使用模拟HTTP响应，不证明真实提炼质量；真实供应商质量、收费及具体宿主Hook需启用后验证。
 
 测试使用隔离知识库和模拟模型，不替代真实宿主遵循验收。可用 `SHARED_BRAIN_TEST_EXE` 指定待测构建的 EXE；未指定时集成测试使用 `dist/shared-brain/shared-brain.exe`。不自动迁移旧资料；旧导入接口不创建草稿，也不进入新版维护。MIT License。
 
