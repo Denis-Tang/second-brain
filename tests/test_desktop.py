@@ -84,7 +84,7 @@ def test_global_prompt_saves_separately_and_reloads_after_vault_switch():
     overview = html.split('<section id="overview"')[1].split('</section>')[0]
     settings = html.split('<section id="settings"')[1].split('</section>')[0]
     assert 'id="global-prompt-form"' in overview and 'id="global-prompt-form"' not in settings
-    assert 'data-copy-unbind disabled>解绑提示词</button>' in settings.split('</form>')[-1]
+    assert 'data-copy-unbind disabled>复制解绑提示词</button>' in settings.split('</form>')[-1]
     assert overview.index('class="hint growth-note"') < overview.index('id="global-prompt-form"')
     script = r'''
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
@@ -191,13 +191,17 @@ const submit = async id => {get('project-form').submit({preventDefault() {}, sub
   }
   assert.equal(get('project-count').textContent, '全部项目（3）');
   const card = get('project-list').children[0];
-  assert.equal(card.children[2].children.some(button => button.textContent === '复制路径'), false);
-  assert.equal(card.children[3].children[0].textContent, 'D:/work');
-  assert.equal(card.children[3].children[1].textContent, '复制路径');
-  card.children[3].children[1].click();
+  const actions = card.children[0].children[1], path = card.children[1].children[1];
+  assert.equal(actions.children[0].textContent, '编辑');
+  assert.equal(actions.children[1].children[0].textContent, '更多');
+  assert.equal(card.children[1].children[0].textContent, '工作目录');
+  assert.equal(card.children[2].children[0].textContent, '项目资料');
+  assert.equal(path.children[0].textContent, 'D:/work');
+  assert.equal(path.children[1].textContent, '复制路径');
+  path.children[1].click();
   await settle();
   assert.deepEqual(copied, ['D:/work']);
-  get('project-list').children[1].children[2].children[0].click();
+  get('project-list').children[1].children[0].children[1].children[0].click();
   get('project-name').value = '项目二修改';
   await submit('save-project');
   assert.equal(get('project-editor').open, false);
@@ -207,15 +211,18 @@ const submit = async id => {get('project-form').submit({preventDefault() {}, sub
   assert.deepEqual(calls.map(c => c.id), ['', '', '', '2', '']);
   assert.deepEqual(projects.map(p => p.name), ['项目一', '项目二修改', '项目三', '项目四']);
   assert.equal(get('project-count').textContent, '全部项目（4）');
-  get('project-list').children[1].children[2].lastChild.click();
+  const menu = get('project-list').children[1].children[0].children[1].children[1];
+  menu.open = true;
+  menu.children[1].lastChild.click();
   await settle();
   assert.equal(get('delete-project-dialog').open, true);
+  assert.equal(menu.open, false);
   assert.match(get('delete-project-question').textContent, /项目二修改/);
   assert.deepEqual(deletions, []);
   get('cancel-delete-project').click();
   assert.equal(get('delete-project-dialog').open, false);
   assert.deepEqual(deletions, []);
-  get('project-list').children[2].children[2].lastChild.click();
+  get('project-list').children[2].children[0].children[1].children[1].children[1].lastChild.click();
   get('confirm-delete-project').click({currentTarget: get('confirm-delete-project')});
   await settle();
   assert.deepEqual(deletions, ['3']);
@@ -268,6 +275,24 @@ def test_native_host_bridge_stops_worker_on_exit(tmp_path, monkeypatch):
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows desktop singleton")
 def test_duplicate_desktop_exits_and_tray_exit_allows_restart(tmp_path, monkeypatch):
+    load_library = desktop.ctypes.WinDLL
+
+    def isolated_library(name, **kwargs):
+        library = load_library(name, **kwargs)
+        if name == "kernel32":
+            create_mutex = library.CreateMutexW
+
+            def isolated_mutex(security, owner, name):
+                create_mutex.argtypes = isolated_mutex.argtypes
+                create_mutex.restype = isolated_mutex.restype
+                return create_mutex(security, owner, "Local\\SharedBrain.Test." + tmp_path.parent.name)
+
+            library.CreateMutexW = isolated_mutex
+        else:
+            library.FindWindowW = lambda *_: None
+        return library
+
+    monkeypatch.setattr(desktop.ctypes, "WinDLL", isolated_library)
     calls = []
 
     def existing(home):

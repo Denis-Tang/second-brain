@@ -10,12 +10,12 @@
 <body>
 
 <div class="titlebar"><span>Shared Brain</span><div class="window-actions"><button data-window="minimize" aria-label="最小化">−</button><button data-window="maximize" aria-label="最大化或还原">□</button><button data-window="close" aria-label="关闭到托盘">×</button></div></div>
-<div class="shell"><aside><div class="brand"><img src="icon.svg" alt=""><div>Shared Brain<small>本地共享记忆</small></div></div><nav><button class="nav-item active" data-page="overview" aria-label="总观" title="总观"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2.5"/><rect x="14" y="3" width="7" height="7" rx="2.5"/><rect x="3" y="14" width="7" height="7" rx="2.5"/><rect x="14" y="14" width="7" height="7" rx="2.5"/></svg></span><span class="nav-label">总观</span></button><button class="nav-item" data-page="projects" aria-label="项目配置" title="项目配置"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a3 3 0 0 1 3-3h3l3 3h6a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3Z"/><path d="M8 12h8M8 16h5"/></svg></span><span class="nav-label">项目配置</span></button><button class="nav-item" data-page="settings" aria-label="设置" title="设置"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h4m6 0h8M3 17h8m6 0h4"/><circle cx="10" cy="7" r="3"/><circle cx="14" cy="17" r="3"/></svg></span><span class="nav-label">设置</span></button></nav><div class="foot"><span class="status-dot" id="ready-dot">●</span> <span id="ready-label">正在连接</span><p>关闭后留在托盘</p></div></aside><main tabindex="0" aria-label="页面内容">
+<div class="shell"><aside><div class="brand"><img src="icon.svg" alt="Shared Brain"></div><nav><button class="nav-item active" data-page="overview" aria-label="总观" title="总观"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2.5"/><rect x="14" y="3" width="7" height="7" rx="2.5"/><rect x="3" y="14" width="7" height="7" rx="2.5"/><rect x="14" y="14" width="7" height="7" rx="2.5"/></svg></span><span class="nav-label">总观</span></button><button class="nav-item" data-page="projects" aria-label="项目配置" title="项目配置"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a3 3 0 0 1 3-3h3l3 3h6a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3Z"/><path d="M8 12h8M8 16h5"/></svg></span><span class="nav-label">项目配置</span></button><button class="nav-item" data-page="settings" aria-label="设置" title="设置"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h4m6 0h8M3 17h8m6 0h4"/><circle cx="10" cy="7" r="3"/><circle cx="14" cy="17" r="3"/></svg></span><span class="nav-label">设置</span></button></nav><div class="foot"><span class="status-dot" id="ready-dot">●</span> <span id="ready-label">正在连接</span></div></aside><main tabindex="0" aria-label="页面内容">
 
-    <header><div><h1 id="page-title">总观</h1><p id="page-description" class="muted">看看知识库最近的积累。</p></div><div class="header-actions"><span class="badge">● 本地工作区</span><button id="open-setup-guide" class="button secondary" type="button" aria-haspopup="dialog" aria-controls="setup-guide" hidden>配置引导</button></div></header>
+    <header><h1 id="page-title">总观</h1><button id="open-setup-guide" class="button secondary" type="button" aria-haspopup="dialog" aria-controls="setup-guide" hidden>配置引导</button></header>
 
     <section id="overview" class="page active" aria-label="总观">
-      <div class="toolbar"><h2>知识库的积累</h2><div class="tabs" aria-label="历史时间范围">
+      <div class="toolbar"><h2>知识积累</h2><div class="tabs" aria-label="历史时间范围">
         <button data-period="24h" aria-pressed="true">24 小时</button><button data-period="7d" aria-pressed="false">7 天</button><button data-period="30d" aria-pressed="false">30 天</button>
       </div></div>
       <div class="stats" id="growth-cards" aria-live="polite">
@@ -26,35 +26,30 @@
 </div>
       <p class="hint growth-note" id="growth-note">新增 token 从本机开始记录后累计。</p>
       <form id="global-prompt-form" class="card">
-        <div class="card-heading"><div><h2>全局提示词</h2><p class="muted">把希望所有 Agent 遵守的习惯写在这里。</p></div></div>
+        <div class="card-heading"><h2>全局提示词</h2></div>
         <p id="prompt-vault" class="hint"></p>
-        <label for="global-prompt">提示词内容</label>
-        <textarea id="global-prompt" rows="4" placeholder="例如：代码保持简洁，不做提前抽象。" disabled></textarea>
-        <p class="hint">仅由你编辑，夜间整理不会改动。</p>
-        <div class="action-row"><button id="save-global-prompt" class="button primary" type="submit" disabled>保存全局提示词</button></div>
+        <textarea id="global-prompt" rows="4" aria-label="全局提示词" placeholder="例如：代码保持简洁，不做提前抽象。" disabled></textarea>
+        <div class="action-row form-actions"><button id="save-global-prompt" class="button primary" type="submit" disabled>保存</button></div>
       </form>
     </section>
 
     <section id="projects" class="page" aria-label="项目配置">
       <div class="toolbar">
-        <div><h2 id="project-count">全部项目</h2><p class="muted">关联工作文件夹，让 Agent 找到对应项目。</p></div>
+        <h2 id="project-count">全部项目</h2>
         <button type="button" id="new-project" class="button primary">＋ 新增项目</button>
       </div>
-      <p class="hint project-rules">子文件夹自动归入项目。删除项目会保留历史资料和工作文件。</p>
       <div id="project-list" aria-live="polite"></div>
       <dialog id="project-editor" aria-labelledby="project-form-title">
       <form id="project-form">
         <h2 id="project-form-title">新增项目</h2>
-        <p id="project-form-description" class="muted">为项目选择一个或多个工作文件夹。</p>
         <label for="project-name">项目名称</label>
         <input id="project-name" required maxlength="100" placeholder="例如：网站开发">
         <label>关联工作目录</label>
         <div id="project-paths"></div>
         <button type="button" id="add-project-path" class="button secondary">添加文件夹</button>
-        <p class="hint">改名或移除目录不会删除已有资料。</p>
-        <div class="action-row">
-          <button type="submit" id="save-project" class="button primary">创建项目</button>
+        <div class="action-row form-actions">
           <button type="button" id="cancel-project" class="button secondary">取消</button>
+          <button type="submit" id="save-project" class="button primary">创建项目</button>
         </div>
       </form>
       </dialog>
@@ -62,9 +57,9 @@
         <h2 id="delete-project-title">删除项目</h2>
         <p id="delete-project-question"></p>
         <p class="muted">项目资料会归档，历史记录和工作文件都会保留。</p>
-        <div class="action-row">
+        <div class="action-row form-actions">
           <button type="button" id="cancel-delete-project" class="button secondary" autofocus>取消</button>
-          <button type="button" id="confirm-delete-project" class="button primary">确认删除</button>
+          <button type="button" id="confirm-delete-project" class="button danger">删除项目</button>
         </div>
       </dialog>
     </section>
@@ -84,31 +79,28 @@
       </dialog>
       <form id="settings-form">
         <article class="card">
-          <div class="card-heading"><div><h2>选择知识库</h2><p class="muted">选择保存记忆的文件夹，已有知识库可以直接使用。</p></div></div>
+          <div class="card-heading"><h2>知识库</h2></div>
           <label for="vault-path">知识库文件夹</label>
           <div class="input-row"><input id="vault-path" required placeholder="选择用于保存共享记忆的文件夹"><button type="button" id="choose-vault" class="button secondary">选择文件夹</button></div>
             <div class="action-row"><button class="button secondary" type="button" data-copy-vault disabled>复制知识库地址</button><button class="button secondary" type="button" data-copy-agent disabled>复制内置提示词</button></div>
         </article>
         <article class="card">
-          <div class="card-heading"><div><h2>模型连接</h2><p class="muted">用于夜间整理，暂时支持 DeepSeek。</p></div><span class="tag" id="key-status">密钥未配置</span></div>
+          <div class="card-heading"><h2>模型连接</h2><span class="tag" id="key-status">密钥未配置</span></div>
           <label for="base-url">API 地址</label><input id="base-url" type="url" required placeholder="兼容 OpenAI 的 API 地址">
           <label for="model">模型名称</label><input id="model" required placeholder="模型 ID">
           <label for="api-key">API 密钥</label><input id="api-key" type="password" autocomplete="new-password" placeholder="留空保留已有密钥">
-          <p class="hint">密钥只在本机保存，不会回显。填写新密钥后点击保存即可替换。</p>
           <label class="checkbox-row"><input id="clear-key" type="checkbox"><span>清除已保存的密钥</span></label>
           <div class="action-row"><button class="button secondary" type="button" id="test-button">测试已保存的连接</button></div>
         </article>
         <article class="card">
-          <div class="card-heading"><div><h2>夜间自动维护</h2><p class="muted">应用运行时，每天按本机时间整理待处理内容。</p></div><label class="switch"><input id="maintenance-enabled" type="checkbox" aria-label="启用自动维护"><span></span></label></div>
+          <div class="card-heading"><h2>夜间自动维护</h2><label class="switch"><input id="maintenance-enabled" type="checkbox" aria-label="启用自动维护"><span></span></label></div>
           <div class="time-row"><label for="maintenance-time">每天执行时间</label><input id="maintenance-time" type="time" required><span class="muted">本机时间</span></div>
           <p id="budget-status" class="hint"></p>
-          <p class="hint">使用 DeepSeek V4.1 Flash 整理新增内容。每月最多 10 元，每天最多整理 3 批；超出预算的内容留待后续处理。</p>
-          <p class="hint">默认凌晨 02:00，需手动开启。关闭窗口后可在托盘继续运行；退出程序会停止整理，下次启动再处理积压。</p>
+          <p class="hint">DeepSeek V4.1 Flash · 每月最多 ¥10 · 每天最多 3 批</p>
         </article>
-        <div class="action-row"><button class="button primary" type="submit">保存设置</button></div>
+        <div class="action-row form-actions"><button class="button primary" type="submit">保存设置</button></div>
       </form>
-      <div class="action-row"><button class="button secondary" type="button" data-copy-unbind disabled>解绑提示词</button></div>
-      <p class="hint">复制后发送给要解绑的 Agent，解除接入并保留资料，继续直接读写 Markdown。</p>
+      <div class="settings-footer"><button class="button quiet" type="button" data-copy-unbind disabled>复制解绑提示词</button></div>
     </section>
 
   </main></div>

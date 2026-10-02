@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -26,7 +27,9 @@ internal static class Program
             Title = "Shared Brain", Width = 1160, Height = 860,
             MinWidth = 680, MinHeight = 500, WindowStartupLocation = WindowStartupLocation.CenterScreen,
             WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.CanResize,
-            Background = Brushes.Transparent, Icon = new BitmapImage(new Uri(Path.Combine(assets, "icon.ico")))
+            Background = Brushes.Transparent,
+            Icon = BitmapDecoder.Create(new Uri(Path.Combine(assets, "icon.ico")), BitmapCreateOptions.None, BitmapCacheOption.OnLoad)
+                .Frames.MaxBy(frame => frame.PixelWidth)
         };
         app.MainWindow = window;
         WindowChrome.SetWindowChrome(window, new WindowChrome
@@ -42,7 +45,7 @@ internal static class Program
         using var tray = new Forms.NotifyIcon
         {
             Icon = new System.Drawing.Icon(Path.Combine(assets, "icon.ico")),
-            Text = "Shared Brain · 关闭窗口后仍在托盘运行", Visible = true,
+            Text = "Shared Brain", Visible = true,
             ContextMenuStrip = new Forms.ContextMenuStrip()
         };
         void Show()
@@ -60,6 +63,12 @@ internal static class Program
         window.SourceInitialized += (_, _) =>
         {
             var handle = new WindowInteropHelper(window).Handle;
+            HwndSource.FromHwnd(handle).AddHook(ConstrainMaximizedWindow);
+            HwndSource.FromHwnd(handle).AddHook((nint hwnd, int message, nint wParam, nint lParam, ref bool handled) =>
+            {
+                if (message == 0x18 && wParam != 0 && window.Visibility != Visibility.Visible) window.Show();
+                return 0;
+            });
             var round = 2; var light = 0; var acrylic = 3;
             var margins = new Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
             Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(handle, 20, ref light, 4));
@@ -68,11 +77,13 @@ internal static class Program
             Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(handle, 38, ref acrylic, 4));
         };
         window.StateChanged += (_, _) => browser.Visibility = window.WindowState == WindowState.Minimized ? Visibility.Collapsed : Visibility.Visible;
-        window.Loaded += async (_, _) =>
+        window.ContentRendered += InitializeBrowser;
+        async void InitializeBrowser(object? sender, EventArgs e)
         {
+            window.ContentRendered -= InitializeBrowser;
             var environment = await CoreWebView2Environment.CreateAsync(null, args[1]);
             await browser.EnsureCoreWebView2Async(environment);
-            browser.ZoomFactor = 1.75;
+            browser.ZoomFactor = 1.5;
             browser.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             browser.CoreWebView2.WebMessageReceived += (_, e) =>
             {
@@ -104,7 +115,7 @@ internal static class Program
                 await app.Dispatcher.InvokeAsync(Quit);
             });
             browser.Source = new Uri(Path.Combine(assets, "index.html"));
-        };
+        }
         app.DispatcherUnhandledException += (_, e) =>
         {
             MessageBox.Show(e.Exception.Message, "Shared Brain", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -113,6 +124,19 @@ internal static class Program
         app.Exit += (_, _) => { tray.Visible = false; browser.Dispose(); };
         app.Run(window);
     }
+    private static nint ConstrainMaximizedWindow(nint handle, int message, nint wParam, nint lParam, ref bool handled)
+    {
+        if (message != 0x24) return 0;
+        var screen = Forms.Screen.FromHandle(handle);
+        var info = Marshal.PtrToStructure<MinMaxInfo>(lParam);
+        info.MaxPosition = new Point { X = screen.WorkingArea.Left - screen.Bounds.Left, Y = screen.WorkingArea.Top - screen.Bounds.Top };
+        info.MaxSize = new Point { X = screen.WorkingArea.Width, Y = screen.WorkingArea.Height };
+        Marshal.StructureToPtr(info, lParam, false);
+        handled = true;
+        return 0;
+    }
+    [StructLayout(LayoutKind.Sequential)] private struct Point { public int X, Y; }
+    [StructLayout(LayoutKind.Sequential)] private struct MinMaxInfo { public Point Reserved, MaxSize, MaxPosition, MinTrackSize, MaxTrackSize; }
     [StructLayout(LayoutKind.Sequential)] private struct Margins { public int Left, Right, Top, Bottom; }
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(nint handle, int attribute, ref int value, int size);
     [DllImport("dwmapi.dll")] private static extern int DwmExtendFrameIntoClientArea(nint handle, ref Margins margins);

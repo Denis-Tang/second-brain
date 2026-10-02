@@ -1,8 +1,8 @@
 const $ = (id) => document.getElementById(id);
 const pages = {
-  projects: ["项目配置", "让每个项目都有自己的记录。"],
-  overview: ["总观", "看看知识库最近的积累。"],
-  settings: ["设置", "选好知识库，就可以开始。"],
+  projects: "项目配置",
+  overview: "总观",
+  settings: "设置",
 };
 let toastTimer;
 let activePage = "overview";
@@ -38,7 +38,7 @@ async function refresh(fillForms = false) {
   $("budget-status").textContent = budget ? `本月已用/预留 ¥${budget.used_or_reserved_cny.toFixed(4)} / ¥${budget.monthly_limit_cny} · 剩余 ¥${budget.remaining_cny.toFixed(4)} · 今日 ${budget.today_calls}/3 批` : "";
   vaultReady = state.ready;
   vaultPath = settings.vault_path || "";
-  $("ready-label").textContent = state.ready ? "知识库已就绪" : (vaultPath ? "等待保存设置" : "等待选择仓库");
+  $("ready-label").textContent = state.ready ? "已就绪" : (vaultPath ? "待保存" : "未设置");
   $("ready-dot").classList.toggle("ready", state.ready);
   $("key-status").textContent = state.key_configured ? "密钥已配置" : "密钥未配置";
   $("key-status").classList.toggle("configured", state.key_configured);
@@ -73,8 +73,7 @@ function activatePage(page) {
   $("open-setup-guide").hidden = page !== "settings";
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.page === page));
   document.querySelectorAll(".page").forEach((item) => item.classList.toggle("active", item.id === page));
-  [$("page-title").textContent, $("page-description").textContent] = page === "settings" && !vaultReady
-    ? ["首次设置", "选择文件夹并保存，再复制提示词接入 Agent。"] : pages[page];
+  $("page-title").textContent = page === "settings" && !vaultReady ? "首次设置" : pages[page];
 }
 
 let selectedMetric = "sessions";
@@ -110,7 +109,7 @@ function renderHistory(metric) {
   $("chart-title").textContent = metric.label;
   $("axis-start").textContent = $("axis-end").textContent = "";
   if (!metric.points.length) {
-    const empty = document.createElement("p");empty.className = "chart-empty";empty.textContent = "开始积累后，这里会显示变化。";plot.append(empty);return;
+    const empty = document.createElement("p");empty.className = "chart-empty";empty.textContent = "暂无历史记录";plot.append(empty);return;
   }
   const points = metric.points, values = points.map(p => p.value), times = points.map(p => new Date(p.at).getTime());
   const start = times[0], end = times[times.length-1], low = Math.min(...values), high = Math.max(...values);
@@ -298,8 +297,7 @@ function editProject(project) {
   editingProject = project?.project_id || "";
   projectPaths = [...(project?.paths || [])];
   $("project-name").value = project?.name || "";
-  $("project-form-title").textContent = project ? `编辑项目：${project.name}` : "新增项目";
-  $("project-form-description").textContent = project ? "修改名称或关联的工作文件夹。" : "为项目选择一个或多个工作文件夹。";
+  $("project-form-title").textContent = project ? "编辑项目" : "新增项目";
   $("save-project").textContent = project ? "保存修改" : "创建项目";
   renderProjectPaths();
 }
@@ -312,35 +310,52 @@ async function refreshProjects() {
   if (!result.projects.length) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
-    empty.textContent = vaultReady ? "还没有项目，点击“新增项目”开始。" : "请先在设置中保存知识库路径。";
+    empty.textContent = vaultReady ? "暂无项目" : "请先在设置中保存知识库路径。";
     $("project-list").append(empty);
   }
   for (const project of result.projects) {
     const card = document.createElement("article");
-    card.className = "card";
+    card.className = "card project-card";
+    const heading = document.createElement("div");
+    heading.className = "project-heading";
     const title = document.createElement("h2");
     title.textContent = project.name;
-    const directory = document.createElement("p");
-    directory.className = "hint project-directory";
-    directory.textContent = `项目资料：${project.directory}`;
     const actions = document.createElement("div");
-    actions.className = "action-row";
-    actions.append(projectButton("编辑", () => {
-      editProject(project);
-      $("project-editor").showModal();
-    }), projectButton("复制名称", () => copyProjectText(project.name)),
-    projectButton("删除项目", () => {
+    actions.className = "project-actions";
+    const menu = document.createElement("details");
+    menu.className = "project-menu";
+    const summary = document.createElement("summary");
+    summary.textContent = "更多";
+    const menuItems = document.createElement("div");
+    menuItems.className = "project-menu-items";
+    menuItems.append(projectButton("复制名称", () => {
+      menu.open = false;
+      summary.focus();
+      return copyProjectText(project.name);
+    }), projectButton("删除项目", () => {
+      menu.open = false;
+      summary.focus();
       $("delete-project-dialog").dataset.projectId = project.project_id;
       $("delete-project-question").textContent = `确定删除“${project.name}”的立项信息吗？`;
       $("delete-project-dialog").showModal();
     }));
-    actions.lastChild.title = "删除立项和路径绑定，保留历史资料与工作目录";
-    card.append(title, directory, actions);
+    menuItems.lastChild.className = "button destructive";
+    menu.append(summary, menuItems);
+    actions.append(projectButton("编辑", () => {
+      editProject(project);
+      $("project-editor").showModal();
+    }), menu);
+    heading.append(title, actions);
+    const paths = document.createElement("div");
+    paths.className = "project-field";
+    const pathsLabel = document.createElement("h3");
+    pathsLabel.textContent = "工作目录";
+    paths.append(pathsLabel);
     if (!project.paths.length) {
       const note = document.createElement("p");
       note.className = "hint";
-      note.textContent = "尚未关联工作文件夹。";
-      card.append(note);
+      note.textContent = "未关联";
+      paths.append(note);
     }
     for (const path of project.paths) {
       const row = document.createElement("div");
@@ -348,8 +363,16 @@ async function refreshProjects() {
       const label = document.createElement("span");
       label.textContent = path;
       row.append(label, projectButton("复制路径", () => copyProjectText(path)));
-      card.append(row);
+      paths.append(row);
     }
+    const directory = document.createElement("div");
+    directory.className = "project-field project-directory";
+    const directoryLabel = document.createElement("h3");
+    directoryLabel.textContent = "项目资料";
+    const directoryPath = document.createElement("p");
+    directoryPath.textContent = project.directory;
+    directory.append(directoryLabel, directoryPath);
+    card.append(heading, paths, directory);
     $("project-list").append(card);
   }
 }
