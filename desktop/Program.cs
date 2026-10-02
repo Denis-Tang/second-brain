@@ -26,7 +26,7 @@ internal static class Program
         {
             Title = "Shared Brain", Width = 1160, Height = 860,
             MinWidth = 680, MinHeight = 500, WindowStartupLocation = WindowStartupLocation.CenterScreen,
-            WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.CanResize,
+            WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.CanResize, ShowActivated = false,
             Background = Brushes.Transparent,
             Icon = BitmapDecoder.Create(new Uri(Path.Combine(assets, "icon.ico")), BitmapCreateOptions.None, BitmapCacheOption.OnLoad)
                 .Frames.MaxBy(frame => frame.PixelWidth)
@@ -69,7 +69,8 @@ internal static class Program
                 if (message == 0x18 && wParam != 0 && window.Visibility != Visibility.Visible) window.Show();
                 return 0;
             });
-            var round = 2; var light = 0; var acrylic = 3;
+            var round = 2; var light = 0; var acrylic = 3; var cloaked = 1;
+            Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(handle, 13, ref cloaked, 4));
             var margins = new Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
             Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(handle, 20, ref light, 4));
             Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(handle, 33, ref round, 4));
@@ -114,6 +115,14 @@ internal static class Program
                     await app.Dispatcher.InvokeAsync(() => browser.CoreWebView2.PostWebMessageAsJson(line));
                 await app.Dispatcher.InvokeAsync(Quit);
             });
+            browser.CoreWebView2.NavigationCompleted += async (_, _) =>
+            {
+                // Render the first frame before revealing the acrylic window.
+                await browser.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, Stream.Null);
+                var cloaked = 0;
+                Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(new WindowInteropHelper(window).Handle, 13, ref cloaked, 4));
+                window.Activate();
+            };
             browser.Source = new Uri(Path.Combine(assets, "index.html"));
         }
         app.DispatcherUnhandledException += (_, e) =>
