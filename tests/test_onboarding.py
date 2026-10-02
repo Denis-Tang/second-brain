@@ -31,6 +31,10 @@ def test_prompt_embeds_runtime_paths_and_valid_mcp_json_without_writing(tmp_path
     assert "草稿不自动加载、检索或夜间整理" in prompt
     assert "不要重复初始化、重建 Obsidian 架构" in prompt
     assert "已有相同 shared_brain 接入则复用" in prompt
+    checks = prompt.rsplit("配置完成后的 Hook 检查（真实故障经验）：", 1)[1]
+    assert all(text in checks for text in ('& "<安装目录>/runtime/node.exe"', "hooks/list",
+                                          "trustStatus", "自动注入根身份", "不把手动运行当作自动触发证据"))
+    assert prompt.rstrip().endswith("尚未观测自动触发的事件明确列为待验证，报告实际配置位置、验证结果及剩余问题。")
     assert list(tmp_path.iterdir()) == []
 
 

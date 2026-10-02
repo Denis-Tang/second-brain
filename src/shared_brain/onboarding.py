@@ -95,4 +95,12 @@ Hook 程序入口（标准输入一个 JSON；stdout 一个 JSON；不调用模�
 失败 Hook 仅用于根代理；子代理失败由其结果回传。Hook 自身失败不得阻塞主任务，使用宿主支持的短超时；不要用模型完成 Hook 适配期间的错误推断。
 
 配置时只增补必要薄入口和有文档支持的 Hook，仓库外配置先留 .bak，不覆盖其他约定。验证 status 与 bootstrap，并在临时会话检查项目匹配、未匹配独立会话、保存、一次收尾提醒；不要为了验证触发付费调用。报告实际配置位置、哪些 Hook 经过验证、关闭这些 Hook 的方法。
+
+配置完成后的 Hook 检查（真实故障经验）：
+Codex Windows 曾在 MCP 已就绪时，SessionStart、UserPromptSubmit、Stop 全部报 hook exited with code 1；原因是 PowerShell 命令缺少调用运算符 &，Node 尚未启动就出现 UnexpectedToken。修改命令后，旧信任记录又会使 Hook 被跳过。配置存在、MCP 就绪或手动 bootstrap 成功都不能证明 Hook 自动触发。
+1. 核对宿主实际使用的 Shell。Codex 使用 PowerShell 时，commandWindows 应以 `& "<安装目录>/runtime/node.exe" "<安装目录>/integrations/native-hooks.mjs" ...` 调用；其他 Shell 按其语法配置，不能直接照搬。
+2. 用 Codex hooks/list 核对这四项 Hook 的 enabled 和 trustStatus；命令改变后按宿主原生信任机制更新对应记录，确认已启用且受信任，保留其他 Hook，不开启跳过信任。
+3. 先按实际 Shell 执行 SessionStart 命令，传入真实会话 ID、工作目录及事件 JSON；检查退出码、stderr 和 stdout JSON，确认输出含根身份及 bootstrap 提醒，定位解析、路径或运行时错误。
+4. 重启宿主或新开会话后，确认 SessionStart 自动注入根身份和启动提醒，并查看 UserPromptSubmit、Stop 的真实运行记录及错误；区分正常收尾提醒与执行失败，不把手动运行当作自动触发证据。
+尚未观测自动触发的事件明确列为待验证，报告实际配置位置、验证结果及剩余问题。
 """
