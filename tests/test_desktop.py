@@ -193,7 +193,8 @@ const submit = async id => {get('project-form').submit({preventDefault() {}, sub
   const card = get('project-list').children[0];
   const actions = card.children[0].children[1], path = card.children[1].children[1];
   assert.equal(actions.children[0].textContent, '编辑');
-  assert.equal(actions.children[1].children[0].textContent, '更多');
+  assert.equal(actions.children[1].children[0].textContent, '···');
+  assert.equal(actions.children[1].children[0].ariaLabel, '更多操作');
   assert.equal(card.children[1].children[0].textContent, '工作目录');
   assert.equal(card.children[2].children[0].textContent, '项目资料');
   assert.equal(path.children[0].textContent, 'D:/work');
@@ -330,3 +331,127 @@ def test_hidden_desktop_window_is_restored_without_starting_another(monkeypatch)
         assert calls == []
     finally:
         user.DestroyWindow(window)
+
+
+def test_version_chip_checks_updates_downloads_and_copies_the_agent_prompt():
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "src/shared_brain/web/index.html").read_text(encoding="utf-8")
+    foot = html.split('<div class="foot">')[1].split("</div>")[0]
+    assert 'id="app-version"' in foot and foot.index('id="app-version"') < foot.index('id="ready-label"')
+    dialog = html.split('<dialog id="update-dialog"')[1].split("</dialog>")[0]
+    for element in ('id="update-title"', 'id="update-notes"', 'id="update-download"', 'id="update-progress"',
+                    'id="update-copy"', 'id="update-page"'):
+        assert element in dialog
+    script = r'''
+const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
+const elements = new Map(), copied = [], opened = [], folders = [], applied = [];
+const element = () => ({value: '', textContent: '', hidden: false, open: false, disabled: false, checked: false,
+  dataset: {}, children: [], style: {}, classList: {toggle() {}},
+  addEventListener(event, fn) {this[event] = fn;},
+  append(...items) {this.children.push(...items);}, replaceChildren() {this.children = [];},
+  showModal() {this.open = true;}, close() {this.open = false;}});
+const get = id => {if (!elements.has(id)) elements.set(id, element()); return elements.get(id);};
+let reply = null, applyReply = {started: true, message: '正在退出并替换，程序稍后会自动重启。'},
+  downloadState = {stage: 'idle', message: '', percent: 0, path: ''};
+const context = {document: {getElementById: get, querySelectorAll: () => [], createElement: element},
+  window: {addEventListener() {}, matchMedia: () => ({matches: false}), desktop: {
+    status: async () => ({ready: true, version: '0.4.4', global_prompt: '', budget: null,
+      settings: {vault_path: 'D:/vault', base_url: 'https://api.deepseek.com', model: 'deepseek-flash'}}),
+    check_update: async () => reply,
+    open_release_page: async () => {opened.push(1); return {opened: true};},
+    download_update: async () => ({started: true, stage: 'downloading', percent: 0, message: '正在下载…'}),
+    update_download_state: async () => downloadState,
+    cancel_download: async () => ({stage: 'idle', message: '下载已取消。'}),
+    open_download_folder: async path => {folders.push(path); return {path: 'D:/home/updates/0.4.5'};},
+    apply_update: async () => {applied.push(1); return applyReply;}}},
+  navigator: {clipboard: {writeText: async text => copied.push(text)}},
+  setTimeout() {}, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+  performance: {now: () => 0}, requestAnimationFrame() {return 1;}};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+const settle = () => new Promise(resolve => setImmediate(resolve));
+const click = id => get(id).click({currentTarget: get(id)});
+(async () => {
+  await vm.runInContext("activePage = 'settings'", context);
+  await vm.runInContext('refresh()', context);
+  assert.equal(get('app-version').textContent, 'v0.4.4');
+
+  reply = {newer: true, available: true, latest: '0.4.5', current: '0.4.4', cached: false,
+    published_at: '2026-10-05T00:00:00Z', notes: '本版改进检索刷新。',
+    asset: {size: 152183570, sha256: 'a'.repeat(64)}, local_archive: '',
+    prompt: '请把 Shared Brain 从 0.4.4 更新到 0.4.5', message: '发现新版本 v0.4.5。'};
+  click('app-version');
+  await settle(); await settle(); await settle();
+  assert.equal(get('update-dialog').open, true);
+  assert.match(get('update-title').textContent, /发现新版本 v0\.4\.5/);
+  assert.match(get('update-summary').textContent, /发布于 2026-10-05/);
+  assert.equal(get('update-notes').hidden, false);
+  assert.equal(get('update-download').hidden, false);
+  assert.equal(get('update-download').textContent, '下载并校验');
+  assert.equal(get('update-folder').hidden, true);
+  assert.equal(get('update-staged').hidden, true);
+  assert.equal(get('update-copy').hidden, false);
+
+  click('update-download');
+  await settle(); await settle();
+  assert.equal(get('update-download').textContent, '取消下载');
+  assert.equal(get('update-progress').hidden, false);
+
+  downloadState = {stage: 'downloading', percent: 42, message: '正在下载 62.0 MB', path: ''};
+  await vm.runInContext('pollUpdateDownload()', context);
+  assert.equal(get('update-bar-fill').style.width, '42%');
+  assert.match(get('update-progress-text').textContent, /62\.0 MB/);
+
+  downloadState = {stage: 'done', percent: 100, path: 'D:/home/updates/0.4.5/shared-brain-0.4.5-windows-x64.zip',
+    message: '已下载并校验，可交给 Agent 替换（本程序没有替换任何文件）。'};
+  reply = {...reply, local_archive: downloadState.path,
+    prompt: '请把 Shared Brain 从 0.4.4 更新到 0.4.5（用本地已校验的包）'};
+  await vm.runInContext('pollUpdateDownload()', context);
+  assert.equal(get('update-download').hidden, true);
+  assert.equal(get('update-folder').hidden, false);
+  assert.equal(get('update-staged').hidden, false);
+  assert.match(get('update-staged').textContent, /已下载并校验/);
+  assert.match(get('toast').textContent, /已下载并校验/);
+
+  click('update-folder');
+  await settle();
+  assert.deepEqual(folders, [downloadState.path]);
+
+  assert.equal(get('update-apply').hidden, false, '已下载并校验后应出现「立即更新并重启」');
+  click('update-apply');
+  await settle(); await settle();
+  assert.deepEqual(applied, [1]);
+  assert.match(get('toast').textContent, /正在退出并替换/);
+  assert.match(get('update-progress-text').textContent, /正在退出并替换/);
+  assert.equal(get('update-apply').textContent, '正在更新…');
+
+  applyReply = {started: false, message: '检测到其他 Shared Brain 进程仍在运行'};
+  click('update-apply');
+  await settle(); await settle();
+  assert.deepEqual(applied, [1, 1]);
+  assert.match(get('toast').textContent, /检测到其他 Shared Brain 进程/);
+
+  click('update-copy');
+  await settle();
+  assert.deepEqual(copied, ['请把 Shared Brain 从 0.4.4 更新到 0.4.5（用本地已校验的包）']);
+
+  click('update-page');
+  await settle();
+  assert.equal(opened.length, 1);
+
+  click('update-close');
+  assert.equal(get('update-dialog').open, false);
+
+  reply = {newer: false, available: true, latest: '0.4.4', current: '0.4.4', cached: true,
+    published_at: '', notes: '', asset: {}, prompt: '', local_archive: '', message: '已是最新版本 v0.4.4。'};
+  click('app-version');
+  await settle(); await settle(); await settle();
+  assert.equal(get('update-copy').hidden, true);
+  assert.equal(get('update-download').hidden, true);
+  assert.equal(get('update-notes').hidden, true);
+  assert.match(get('update-summary').textContent, /已是最新版本 v0\.4\.4/);
+})().catch(error => {console.error(error); process.exitCode = 1;});
+'''
+    result = subprocess.run([shutil.which("node"), "-e", script, str(root / "src/shared_brain/web/app.js")],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

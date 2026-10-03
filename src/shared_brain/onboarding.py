@@ -3,6 +3,54 @@ import json
 from pathlib import Path
 
 
+def build_update_prompt(install: Path | None, home: Path, mcp_config: dict, current: str, release: dict,
+                        local_archive: str = "") -> str:
+    """The prompt a user hands to an agent so the agent can perform the update."""
+    asset = release.get("asset") or {}
+    version = str(release.get("version") or "")
+    size = asset.get("size") or 0
+    readable = f"{size / (1024 * 1024):.1f} MB" if isinstance(size, int) and size > 0 else "未知"
+    digest = str(asset.get("sha256") or "")
+    staged = f"\n- 本地已下载并校验通过的安装包：{local_archive}（直接用它，不必重新下载）" if local_archive else ""
+    download = ("下载上面的 ZIP（上面给了本地已校验的包时直接用它）到临时目录，"
+                "计算 SHA256 并与上面的值比对；不一致就停止，不要替换任何文件。")
+    if install is None:
+        return f"""请把源码运行的 Shared Brain（第二大脑）从 {current} 更新到 {version}。
+安装目录：源码运行，尚未打包分发
+应用数据目录（不要动）：{home}
+获取方式：在源码仓库执行 git pull，然后按 scripts/build.ps1 重新构建分发包；构建后桌面、MCP 与 Hook 都指向新构建的目录。
+更新后提醒用户重启 Codex / Claude Code / DeepSeek Harness 的会话或宿主，新的工具定义才会生效。
+不要修改 --home 指向的应用数据目录，不要动知识库内容。"""
+
+    return f"""请把 Shared Brain（本地第二大脑）从 {current} 更新到 {version}。按顺序执行，每步核对实际结果再继续。
+
+已知事实（不用再去查）：
+- 当前版本：{current}
+- 目标版本：{version}
+- 安装目录（要被替换的目录，路径必须保持不变）：{install}
+- 应用数据目录（不能动、不能删）：{home}
+- 知识库不在程序目录内，本次更新不涉及
+- 下载地址：{asset.get('url') or release.get('page')}
+- 文件大小：{readable}
+- SHA256：{digest or '发布方未提供（拿不到校验值时停止并告诉用户，不要继续替换）'}{staged}
+
+现有 MCP 配置（只用来确认路径，不需要修改）：
+```json
+{json.dumps(mcp_config, ensure_ascii=False, indent=2)}
+```
+
+按顺序完成：
+1. 处理占用。宿主的 MCP 是以子进程方式常驻的（Codex / Claude Code / DeepSeek Harness 里的 shared_brain 连接），桌面退出不代表它们退出。先用 tasklist /FI "IMAGENAME eq shared-brain.exe" 核对；仍有进程时先让用户退出对应宿主或重启宿主，再继续。
+2. {download}
+3. 备份。把整个安装目录改名为 {install.name}.bak-{current}（同一磁盘内改名，不要复制，避免大体积拷贝）。
+4. 替换。把新包内容放回原安装目录，目录名必须与原来完全一致。MCP 与 Hook 配置里写的是这个绝对路径，路径不变就不需要改任何配置。
+5. 验证。运行 "{install / 'shared-brain.exe'}" --version，输出应为 {version}；再让用户打开桌面确认左下角版本号显示 v{version}。
+6. 收尾。验证通过后删除 .bak 备份；任何一步失败，把备份改回原目录名并报告失败原因，不要留下半新半旧的安装目录。
+7. 提醒用户重启 Codex / Claude Code / DeepSeek Harness 的会话或宿主，新的工具定义才会生效（MCP 客户端在会话开始时缓存工具列表）。
+
+不要修改 --home 指向的应用数据目录，不要动知识库内容，不要改宿主配置里的程序路径。"""
+
+
 def build_unbind_prompt(vault_path: Path, home: Path, mcp_config: dict, projects: list[dict]) -> str:
     command = mcp_config["mcpServers"]["shared_brain"]
     installation = Path(__file__).resolve().parents[2] if "-m" in command["args"] else Path(command["command"]).parent
@@ -34,7 +82,7 @@ def build_unbind_prompt(vault_path: Path, home: Path, mcp_config: dict, projects
 解绑后保留的 Markdown 薄入口：
 - 使用上述知识库与项目对应关系。按宿主工作区根目录匹配，子目录继承，最具体目录优先；临时 cd 不改变归属，未匹配不自行创建项目。
 - 新根会话读取非空“知识/全局提示词.md”全文；该文件只由用户编辑。按需读取当前项目的项目.md、会话索引.md、相关总结和知识，用 rg 等本地工具检索，不批量注入整个知识库；草稿只在用户提供时读取。
-- 有用阶段直接更新原项目卡的 progress/next_actions 和完整会话总结，更新会话索引的正文链接及 entries，保留原条目、属性、ID、创建时间、用户正文与相对链接。同一会话更新同一总结，任务和决策按需记录；独立会话不自动创建项目卡或总结。根代理负责共享写入，子代理回传。
+- 有用阶段直接更新原项目卡的 progress/next_actions 和完整会话总结，更新会话索引的正文链接及 entries，保留原条目、属性、ID、创建时间、用户正文与相对链接。同一会话更新同一总结，任务和决策按需记录；独立会话也在会话总结目录更新同一份完整总结，不自动创建项目卡。根代理负责共享写入，子代理回传。
 - 实际电脑与工具变更继续更新“项目/独立项目/独立知识/”对应对象，保留位置、当前状态、验证和简短历史。经验保留 sources、conditions、verified、evidence、conflict；未验证不写成已验证。
 - merged_into 非空的记录只作历史，转读指向的新笔记；feedback_pending 为真的记录待复核，不当作现行结论，不批量清空这些标记。必要时核对原始来源和后续反馈。
 - 原始错误及成功反馈仍在上述应用数据目录的 errors 下，按需读取。直接 Markdown 读写不依赖 Shared Brain 程序、MCP、Hook 或 SQLite，不自动整理或安装技能。
@@ -74,12 +122,12 @@ MCP 服务名统一为 shared_brain。
 薄入口与执行规则：
 1. 新根会话调用 bootstrap(cwd,session_id,agent,workspace_root,task=当前任务描述)，task 用不超过 500 字符的简短描述。session_id 必须稳定且取自宿主，不能每阶段随机生成；workspace_root 使用宿主工作区根目录。未提供时使用启动目录；临时 cd 不换工作区。任务未知可省略 task，明确后重新调用。非空 global_prompt 全文遵循；relevant 只返回少量相关知识/技能，其他按需 search。草稿不自动加载、检索或夜间整理。
 2. 项目仅在应用的“项目配置”页面管理。bootstrap 按配置路径及子目录匹配，更具体目录优先；未配置路径直接作为独立会话，不询问、不自行创建或绑定项目。project_directory 是项目资料绝对目录，项目卡、任务和决策使用 save 写入；会话总结仍在会话总结目录，项目索引链接它们。配置变更后重新 bootstrap；保存时程序也重新核对归属。代码与交付物留在工作目录。
-3. 按需 search。项目会话默认传 bootstrap 返回的项目 ID，只搜本项目；独立会话 project 留空，按相关性搜索公共池和全部项目。明确需要公共池时传 project="independent"，跨项目时传 project="all"。核对来源、适用条件与验证依据；涉及已知失败对象时可传 target/method/environment。不要为每个廉价动作强制检索。对象、方法、环境未知时不当成匹配；不把一页失败泛化为网站永久不可用。
-4. 有用阶段由根代理 save，context 来自宿主，包含 role=root、session_id 与相等的 root_session_id；子代理只回传成果、失败和证据。项目会话 summary 传整份最新总结，保留必要历史阶段，项目进度当场更新；独立会话不写总结、项目卡、任务卡、决策或单独 memory。归档仅改状态，不移动文档。
+3. 按需 search。项目会话默认传 bootstrap 返回的项目 ID，只搜本项目；独立会话 project 留空，按相关性搜索公共池和全部项目。明确需要公共池时传 project="independent"，跨项目时传 project="all"。检索模式默认 mode="auto"：中文按二字滑窗匹配，代码风格的查询（标识符、路径、文件名）自动拆分 camelCase/snake_case 并给路径与标题加权；已知查询类型时可显式传 mode="text" 或 mode="code"，返回的 mode 字段说明实际使用的模式。核对来源、适用条件与验证依据；涉及已知失败对象时可传 target/method/environment。不要为每个廉价动作强制检索。对象、方法、环境未知时不当成匹配；不把一页失败泛化为网站永久不可用。
+4. 有用阶段由根代理 save，context 来自宿主，包含 role=root、session_id 与相等的 root_session_id；子代理只回传成果、失败和证据。项目会话 summary 传整份最新总结，保留必要历史阶段，项目进度当场更新；独立会话也保存完整总结，但不创建项目卡、任务卡、决策或单独 memory。归档仅改状态，不移动文档。
 5. 实际失败放 errors 数组，每项 target/method/symptom，建议提供 environment、attempts、workaround、impact=low或high。同一问题用同一 id 补充尝试。每会话一份 JSON。没有错误不建空报告；不要把 fail 字符串或预期探测未命中当成实际失败，不编造因果。
 6. 错误立即可搜。后续检查实际效果成功后调用 feedback，关联原 session_id/error_id，提供 target/method/environment/evidence；换方法成功是绕行，不抹掉原方法失败。项目已验证知识可用 memory 当场保存并附 evidence。
 7. 所有会话发生应用/工具安装、卸载、配置、skills、模型或电脑环境变更时，用 save(changes=[...]) 更新公共独立知识池的对应对象。每项 object/action/location/state 必填：对象、实际动作、具体文件/目录或设置范围、当前状态；evidence 记录真实验证结果，未验证留空，conditions 可注明适用条件。保留简短历史，后续撤销或迁移也更新，不写凭据值。普通源码修改只留项目记录。Hook 不自动观察电脑变更，由实际执行的根代理保存。
-8. 收尾前项目会话保存完整 summary、progress/next_actions；所有会话核对变更及实际错误后传 errors_reviewed=true。独立会话可以只调用 save(context,errors_reviewed=true)，无事项不生成空文件。项目完成/暂停须遵用户决定。conflict 标记的结论仅在当前任务必须选择时询问。
+8. 收尾前所有会话保存完整 summary，项目会话另存 progress/next_actions；所有会话核对变更及实际错误后传 errors_reviewed=true。独立会话同样调用 save(context,summary=完整总结,errors_reviewed=true)，没有变更或错误时不生成空对象或错误报告。项目完成/暂停须遵用户决定。conflict 标记的结论仅在当前任务必须选择时询问。
 9. 夜间只处理新增/变化与积压，按材料归属整理项目知识/技能或公共对象/技能，不跨项目合并。公共对象可以整理，但具体位置、简短变更历史和验证结果必须保留。全局提示词仅用户编辑；草稿不自动参加维护。生成技能须有实际成功过程，只保存知识库记录，不安装或执行。不会替用户改目标、装 Hook 或重试失败。默认不开付费维护；用户可在设置启用，官方 deepseek-flash 非思考，每月10元、每日3批/累计30,000输入/30,000输出，每批最多10,000输出。
 
 Hook 程序入口（标准输入一个 JSON；stdout 一个 JSON；不调用模型）：

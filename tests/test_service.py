@@ -47,7 +47,7 @@ def test_workspace_identity_relocation_independent_and_project_progress(tmp_path
     assert not list((tmp_path / "vault" / "项目").rglob("任务"))
     with pytest.raises(ValueError, match="根代理"):
         service.save({**context, "role": "child"}, summary="不能写")
-    assert service.status()["counts"]["sessions"] == 1
+    assert service.status()["counts"]["sessions"] == 2
 
 
 def test_progress_preserves_project_body(tmp_path):
@@ -306,22 +306,35 @@ def test_global_prompt_scoped_knowledge_objects_and_storage_only_drafts(tmp_path
     assert draft.read_bytes() == snapshot
 
 
-def test_independent_closeout_keeps_failures_but_never_session_documents(tmp_path):
+def test_independent_closeout_saves_summary_without_project_or_maintenance(tmp_path):
     service, _, started = setup(tmp_path)
     workspace = tmp_path / "standalone"
     workspace.mkdir()
     context = {"role": "root", "session_id": "standalone", "root_session_id": "standalone"}
-    service.bootstrap(str(workspace), "standalone", "Codex")
+    boot = service.bootstrap(str(workspace), "standalone", "Codex")
+    assert boot["independent"] and boot["project"] == "" and boot["project_directory"] == ""
     service.hook({**context, "event": "turn"})
+    service.save(context, errors_reviewed=True)
+    reminder = service.hook({**context, "event": "closeout"})
+    assert reminder["decision"] == "block" and "保存完整会话总结" in reminder["reason"]
     assert service.hook({**context, "event": "closeout"}) == {}
-    service.save(context, summary="不应产生总结", errors_reviewed=True)
-    assert not list((tmp_path / "vault" / "会话总结").rglob("*.md"))
+    saved = service.save(context, summary="独立会话阶段成果", errors_reviewed=True)
+    vault = service._vault()
+    metadata, body = vault.read(vault.root / saved["summary"]["path"])
+    assert metadata["project"] == "" and body.strip() == "独立会话阶段成果"
+    assert len(vault.projects()) == 1
+    assert saved["summary"]["path"] not in {row["path"] for row in vault.pending()}
+    assert service.search("独立会话阶段成果", "independent")["results"]
+    assert not service.search("独立会话阶段成果", started["project"])["results"]
     assert not list((tmp_path / "app" / "errors").rglob("*.json"))
+    service.hook({**context, "event": "turn"})
     service.hook({**context, "event": "failure", "actual_failure": True,
                   "error": {"target": "model", "method": "load", "symptom": "missing"}})
     reminder = service.hook({**context, "event": "closeout"})
-    assert reminder["decision"] == "block" and "不写会话总结" in reminder["reason"]
-    service.save(context, errors_reviewed=True)
+    assert reminder["decision"] == "block" and "保存完整会话总结" in reminder["reason"]
+    updated = service.save(context, summary="独立会话阶段成果；已核对失败", errors_reviewed=True)
+    assert updated["summary"]["path"] == saved["summary"]["path"]
+    assert len(list((vault.root / "会话总结").rglob("*.md"))) == 1
     assert service.hook({**context, "event": "closeout"}) == {}
     assert service.search("missing")["errors"]
     assert not service.search("missing", started["project"])["errors"]

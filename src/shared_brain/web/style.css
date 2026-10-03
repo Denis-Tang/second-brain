@@ -55,3 +55,36 @@ button:disabled{opacity:.5;cursor:default}
 .heat-cell.unrecorded{background:repeating-linear-gradient(135deg,#f0f2f5 0 3px,#e3e7ed 3px 4px)!important}.column.unrecorded .top{opacity:.45}
 
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+
+.foot-version{display:block;margin:0 auto 6px;padding:2px 9px;border:1px solid transparent;border-radius:999px;background:none;color:#7a8ba3;font-size:11px;line-height:16px;cursor:pointer}
+.foot-version:hover{background:rgba(255,255,255,.55);border-color:rgba(155,183,229,.5);color:#2a5cca}
+.foot-version:disabled{opacity:.55;cursor:default}
+.release-notes{max-height:240px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:20px;color:var(--muted);background:#f7fafd;border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px}
+#update-dialog p{margin-top:8px}
+.update-progress{margin-top:12px}
+.update-bar{height:6px;border-radius:999px;background:#e8eef6;overflow:hidden}
+.update-bar i{display:block;height:100%;width:0;border-radius:999px;background:var(--blue);transition:width 200ms var(--ease)}
+#update-progress p{margin-top:8px}
+
+/* Project cards: keep the application shell and backend behavior unchanged. */
+.project-card{--action-width:94px;background:rgba(255,255,255,.34);backdrop-filter:blur(22px) saturate(125%);border:1px solid #b9d5f4;border-radius:28px;box-shadow:0 0 0 .5px #b9d5f4,inset 0 1px #fffffff2,inset 0 -1px #ffffffa3,0 5px 16px #39506f0b}
+.project-heading h2{display:flex;align-items:center;gap:13px}
+.project-heading h2::before{content:"";display:block;flex:0 0 39px;width:39px;height:39px;border-radius:11px;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.6'%3E%3Cpath d='M3 7V5h6l3 3h9v12H3Z'/%3E%3C/svg%3E") center/20px no-repeat,linear-gradient(155deg,#23a5ff,#087dea);box-shadow:inset 0 1px #ffffff70,0 3px 7px #1682dc20}
+.project-actions{width:var(--action-width);gap:8px;position:relative}
+.project-actions>.button{width:54px;flex-shrink:0;padding:5px 0;font-size:12px;border-color:#b9d5f4;box-shadow:0 0 0 .5px #b9d5f4;background:#f4f7fb}
+.project-menu{position:static;width:32px}.project-menu summary{padding:5px 0;text-align:center}
+.project-menu-items{top:calc(100% + 14px);width:100%;aspect-ratio:1;padding:12px 8px;display:flex;flex-direction:column;justify-content:center;border-color:#b9d5f4;border-radius:28px;background:rgba(255,255,255,.9);backdrop-filter:blur(20px);transform-origin:top right}
+.project-menu-items button{padding:7px 0;text-align:center;font-size:12px}.project-menu-items button:hover{background:#00000009}
+.project-card .project-path-row{position:relative}.project-card .project-path-row>span{padding-right:104px}
+.project-card .project-path-row button{position:absolute;right:3px;top:50%;transform:translateY(-50%);width:calc(var(--action-width) - 3px);height:26px;padding:0;border:0;border-radius:9px;font-size:11px;background:#46a9f4;color:#fff}
+.project-card .project-path-row button:hover{background:#2998ed;color:#fff}.project-directory p{color:#86acd5}
+#new-project{padding:7px 15px;font-size:12px;border-radius:22px;background:linear-gradient(#5687e5,#356bce);border-color:#3972d1;box-shadow:inset 0 1px #ffffff6b,0 3px 8px #3267bf22}
+.project-card button{transition:background-color 220ms var(--ease),border-color 220ms var(--ease),box-shadow 220ms var(--ease),color 220ms var(--ease)}
+.project-menu-items,#project-editor,#delete-project-dialog{transition:opacity 220ms var(--ease),transform 220ms var(--ease),display 220ms allow-discrete,overlay 220ms allow-discrete;transition-timing-function:var(--ease)}
+.project-menu::details-content{transition:content-visibility 220ms allow-discrete;transition-timing-function:var(--ease)}
+.project-menu:not([open]) .project-menu-items{opacity:0;transform:translateY(-5px) scale(.96)}
+.project-menu[open] .project-menu-items{opacity:1;transform:translateY(0) scale(1)}
+#project-editor,#delete-project-dialog{opacity:0;transform:translateY(8px) scale(.97)}
+#project-editor[open],#delete-project-dialog[open]{opacity:1;transform:translateY(0) scale(1)}
+@starting-style{.project-menu[open] .project-menu-items{opacity:0;transform:translateY(-5px) scale(.96)}#project-editor[open],#delete-project-dialog[open]{opacity:0;transform:translateY(8px) scale(.97)}}
+@media(prefers-reduced-motion:reduce){.project-menu::details-content{transition:none}}

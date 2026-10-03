@@ -9,6 +9,10 @@ let activePage = "overview";
 let overviewPeriod = "24h";
 let vaultReady = false;
 let vaultPath = "";
+let updatePrompt = "";
+let updateArchive = "";
+let updatePoll = 0;
+let updatePolling = false;
 
 function toast(message, error = false) {
   $("toast").textContent = message;
@@ -39,6 +43,9 @@ async function refresh(fillForms = false) {
   vaultReady = state.ready;
   vaultPath = settings.vault_path || "";
   $("ready-label").textContent = state.ready ? "已就绪" : (vaultPath ? "待保存" : "未设置");
+  if (state.version) {
+    $("app-version").textContent = `v${state.version}`;
+  }
   $("ready-dot").classList.toggle("ready", state.ready);
   $("key-status").textContent = state.key_configured ? "密钥已配置" : "密钥未配置";
   $("key-status").classList.toggle("configured", state.key_configured);
@@ -70,6 +77,7 @@ function updatePromptAvailability() {
 
 function activatePage(page) {
   activePage = page;
+  $("new-project").hidden = page !== "projects";
   $("open-setup-guide").hidden = page !== "settings";
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.page === page));
   document.querySelectorAll(".page").forEach((item) => item.classList.toggle("active", item.id === page));
@@ -247,6 +255,137 @@ document.querySelectorAll("[data-copy-unbind]").forEach((button) => {
   }));
 });
 
+function renderUpdateStaged(result) {
+  const staged = $("update-staged");
+  staged.textContent = result.local_archive
+    ? `已下载并校验：${result.local_archive}（本程序没有替换任何文件）` : "";
+  staged.hidden = !result.local_archive;
+  if (result.local_archive) updateArchive = result.local_archive;
+  $("update-download").hidden = !result.newer || !!result.local_archive;
+  $("update-apply").hidden = !(result.newer && !!result.local_archive);
+  $("update-folder").hidden = !updateArchive;
+}
+
+function renderUpdateProgress(state) {
+  const running = state.stage === "downloading";
+  $("update-progress").hidden = !state.stage || state.stage === "idle";
+  $("update-bar-fill").style.width = `${state.percent || 0}%`;
+  $("update-progress-text").textContent = state.message || "";
+  $("update-download").textContent = running ? "取消下载" : "下载并校验";
+}
+
+function stopUpdatePolling() {
+  if (updatePoll) { clearInterval(updatePoll); updatePoll = 0; }
+}
+
+function startUpdatePolling() {
+  stopUpdatePolling();
+  updatePoll = setInterval(() => action(null, pollUpdateDownload), 500);
+}
+
+async function pollUpdateDownload() {
+  if (updatePolling) return;
+  updatePolling = true;
+  try {
+    const state = await call("update_download_state");
+    renderUpdateProgress(state);
+    if (state.stage === "done") {
+      stopUpdatePolling();
+      updateArchive = state.path || updateArchive;
+      const refreshed = await call("check_update");
+      updatePrompt = refreshed.prompt || updatePrompt;
+      renderUpdateStaged(refreshed);
+      $("update-copy").hidden = !updatePrompt;
+      toast(state.message);
+    } else if (state.stage === "failed") {
+      stopUpdatePolling();
+      toast(state.message || "下载失败", true);
+    } else if (state.stage === "idle") {
+      stopUpdatePolling();
+    }
+  } finally {
+    updatePolling = false;
+  }
+}
+
+async function resumeUpdateProgress() {
+  const state = await call("update_download_state");
+  renderUpdateProgress(state);
+  if (state.stage === "downloading") startUpdatePolling();
+}
+
+function showUpdateDialog(result) {
+  updatePrompt = result.newer ? (result.prompt || "") : "";
+  $("update-title").textContent = result.newer ? `发现新版本 v${result.latest}` : "检查更新";
+  const summary = [result.message];
+  if (result.published_at) summary.push(`发布于 ${String(result.published_at).slice(0, 10)}`);
+  if (result.cached && result.available) summary.push("（最近一次检查的结果）");
+  $("update-summary").textContent = summary.filter(Boolean).join(" · ");
+  const notes = $("update-notes");
+  notes.textContent = result.notes || "";
+  notes.hidden = !result.notes;
+  const asset = result.asset || {};
+  const size = asset.size ? ` · 约 ${(asset.size / 1048576).toFixed(1)} MB` : "";
+  const digest = asset.sha256 ? ` · SHA256 ${String(asset.sha256).slice(0, 12)}…` : "";
+  $("update-asset").textContent = result.newer
+    ? `更新时保持程序目录路径不变，MCP 与 Hook 配置无需修改${size}${digest}` : "";
+  updateArchive = "";
+  renderUpdateStaged(result);
+  renderUpdateProgress({stage: "idle"});
+  $("update-copy").hidden = !updatePrompt;
+  $("update-dialog").showModal();
+  action(null, resumeUpdateProgress);
+}
+
+$("app-version").addEventListener("click", (event) => action(event.currentTarget, async () => {
+  showUpdateDialog(await call("check_update"));
+}));
+
+$("update-close").addEventListener("click", () => {
+  stopUpdatePolling();
+  $("update-dialog").close();
+});
+
+$("update-download").addEventListener("click", (event) => action(event.currentTarget, async () => {
+  if ($("update-download").textContent === "取消下载") {
+    renderUpdateProgress(await call("cancel_download"));
+    return;
+  }
+  const state = await call("download_update");
+  renderUpdateProgress(state);
+  if (!state.started) {
+    if (state.message) toast(state.message, true);
+    return;
+  }
+  startUpdatePolling();
+}));
+
+$("update-folder").addEventListener("click", (event) => action(event.currentTarget, async () => {
+  await call("open_download_folder", updateArchive || "");
+}));
+
+$("update-apply").addEventListener("click", (event) => action(event.currentTarget, async () => {
+  const state = await call("apply_update");
+  if (!state.started) {
+    toast(state.message || "无法开始更新", true);
+    return;
+  }
+  event.currentTarget.textContent = "正在更新…";
+  $("update-progress").hidden = false;
+  $("update-progress-text").textContent = state.message || "正在退出并替换，程序稍后会自动重启…";
+  toast(state.message || "正在退出并替换，程序稍后会自动重启…");
+}));
+
+$("update-copy").addEventListener("click", (event) => action(event.currentTarget, async () => {
+  await navigator.clipboard.writeText(updatePrompt);
+  toast("更新提示词已复制，请发送给要执行更新的 Agent");
+}));
+
+$("update-page").addEventListener("click", (event) => action(event.currentTarget, async () => {
+  const result = await call("open_release_page");
+  if (!result.opened) toast("没能自动打开浏览器，请手动访问 GitHub Releases 页面", true);
+}));
+
 window.addEventListener("desktopready", () => {
   action(null, () => refresh(true));
   setInterval(() => action(null, () => refresh()), 30000);
@@ -325,7 +464,8 @@ async function refreshProjects() {
     const menu = document.createElement("details");
     menu.className = "project-menu";
     const summary = document.createElement("summary");
-    summary.textContent = "更多";
+    summary.textContent = "···";
+    summary.ariaLabel = "更多操作";
     const menuItems = document.createElement("div");
     menuItems.className = "project-menu-items";
     menuItems.append(projectButton("复制名称", () => {

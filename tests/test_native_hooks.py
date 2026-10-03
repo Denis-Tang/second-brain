@@ -32,7 +32,7 @@ def test_native_session_identity_and_single_reminder(tmp_path, host):
     assert start["hookEventName"] == "SessionStart"
     assert '"root_session_id":"s1"' in start["additionalContext"]
     assert "task=当前任务描述" in start["additionalContext"]
-    assert "独立会话不写总结" in start["additionalContext"]
+    assert "独立会话也 save 完整 summary" in start["additionalContext"]
     assert "save changes" in start["additionalContext"]
     assert event("SessionStart", agent_id="child") == {}
     assert "子代理" in event("SubagentStart", agent_id="child")["hookSpecificOutput"]["additionalContext"]

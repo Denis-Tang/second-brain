@@ -2,13 +2,15 @@
 
 import json
 import sys
+import webbrowser
 from dataclasses import asdict
 from pathlib import Path
 
+from . import __version__, installer, update
 from .model import ModelClient
-from .onboarding import build_prompt, build_unbind_prompt
+from .onboarding import build_prompt, build_unbind_prompt, build_update_prompt
 from .settings import SettingsStore
-from .vault import Vault, now, fingerprint
+from .vault import Vault, now, fingerprint, detect_mode
 from .errors import ErrorReports
 from .maintenance import maintain, usage_status
 
@@ -33,14 +35,14 @@ class BrainService:
         values = asdict(settings)
         configured = values.pop("key_configured")
         values.pop("credential_account")
-        result = {"settings": values, "key_configured": configured, "ready": False, "global_prompt": "",
+        result = {"version": __version__, "settings": values, "key_configured": configured, "ready": False, "global_prompt": "",
                   "counts": {"tasks": 0, "sessions": 0, "memories": 0, "sources": 0}, "pending": 0, "last_maintenance": None}
         if settings.vault_path and all((Path(settings.vault_path) / folder).is_dir()
                                        for folder in ("项目", "会话总结", "知识", "技能")):
             vault = self._vault()
             result["global_prompt"] = vault.global_prompt()
             result["ready"] = True
-            result["pending"] = len(vault.pending()) + len(ErrorReports(vault).pending())
+            result["pending"] = vault.pending_count() + len(ErrorReports(vault).pending())
             with vault.connect() as con:
                 counts = {r[0]: r[1] for r in con.execute("SELECT kind,count(*) FROM notes GROUP BY kind")}
                 result["counts"] = {"tasks": counts.get("task", 0), "memories": counts.get("memory", 0) + counts.get("skill", 0) + counts.get("object", 0),
@@ -91,6 +93,54 @@ class BrainService:
         return {"text": build_unbind_prompt(vault.path, self.settings.home.resolve(),
                                            self.mcp_config(), vault.configured_projects())}
 
+    def installation_directory(self) -> Path | None:
+        """Directory holding the running program; None when it runs from source."""
+        command = self.mcp_config()["mcpServers"]["shared_brain"]
+        return None if "-m" in command["args"] else Path(command["command"]).parent
+
+    def check_update(self, force: bool = True) -> dict:
+        """Ask GitHub for the newest release; only reads, never downloads or installs."""
+        result = update.check_latest(self.settings.home, force=force)
+        install = self.installation_directory()
+        result["install_directory"] = str(install) if install else ""
+        result["prompt"] = ""
+        result["local_archive"] = ""
+        result["local_verified_at"] = ""
+        if result["newer"]:
+            staged = update.verified_archive(self.settings.home, result["latest"])
+            digest = str((result["asset"] or {}).get("sha256") or "").lower()
+            if staged and digest and str(staged.get("sha256") or "").lower() == digest:
+                result["local_archive"] = str(staged.get("path") or "")
+                result["local_verified_at"] = str(staged.get("verified_at") or "")
+            release = {"version": result["latest"], "asset": result["asset"], "page": result["page"]}
+            result["prompt"] = build_update_prompt(install, self.settings.home.resolve(), self.mcp_config(),
+                                                   result["current"], release, local_archive=result["local_archive"])
+        return result
+
+    def open_release_page(self) -> dict:
+        """Open the public release page in the default browser."""
+        url = update.release_page()
+        try:
+            opened = webbrowser.open(url)
+        except Exception:  # noqa: BLE001 - a missing browser must not break the window
+            opened = False
+        return {"opened": bool(opened), "url": url}
+
+    def apply_update(self) -> dict:
+        """Stage the verified release; a detached script swaps it once this program exits."""
+        install = self.installation_directory()
+        if install is None:
+            return {"started": False, "message": "源码运行时不支持自动替换，请把更新提示词交给 Agent 处理。"}
+        release = self.check_update()
+        if not release.get("newer"):
+            return {"started": False, "message": release.get("message") or "没有可更新的版本。"}
+        staged = update.verified_archive(self.settings.home, release["latest"])
+        digest = str((release.get("asset") or {}).get("sha256") or "")
+        if not staged or not digest or str(staged.get("sha256") or "").lower() != digest.lower():
+            return {"started": False, "message": "请先下载并校验新版本，再执行替换。"}
+        return installer.apply(self.settings.home, install, release["latest"], release["current"],
+                               Path(str(staged["path"])), digest)
+
     def overview(self, period: str = "24h") -> dict:
         if period not in {"24h", "7d", "30d"}:
             raise ValueError("时间范围须为 24h、7d 或 30d")
@@ -117,9 +167,12 @@ class BrainService:
         ascii_count = sum(c.isascii() for c in text)
         return (ascii_count + 3) // 4 + len(text) - ascii_count
 
-    def search(self, query: str, project: str = "", limit: int = 5, target: str = "", method: str = "", environment: dict | None = None) -> dict:
+    def search(self, query: str, project: str = "", limit: int = 5, target: str = "", method: str = "",
+               environment: dict | None = None, mode: str = "auto") -> dict:
         if not isinstance(query, str) or not query.strip() or len(query) > 500:
             raise ValueError("请输入 1 到 500 字符的检索词")
+        if mode not in {"auto", "text", "code"}:
+            raise ValueError("检索模式须为 auto、text 或 code")
         vault = self._vault()
         errors = ErrorReports(vault).search(query, project, target, method, environment)
         # Omit a whole reminder if its applicability conditions do not fit the context budget.
@@ -129,8 +182,8 @@ class BrainService:
             if used + size <= 300 and len(reminders) < 3:
                 reminders.append(item)
                 used += size
-        results = vault.search(query, project, max(1, min(5, limit)))
-        return {"vault_path": str(vault.path), "results": results, "errors": reminders,
+        results = vault.search(query, project, max(1, min(5, limit)), mode=mode)
+        return {"vault_path": str(vault.path), "results": results, "errors": reminders, "mode": detect_mode(query, mode),
                 "guidance": "匹配结果需核对全部条件；未知条件不代表匹配。conflict=true 时，仅当前任务需要选择才询问用户。历史成功不等于永久可靠。"}
 
     def bootstrap(self, cwd: str, session_id: str, agent: str, workspace_root: str = "", task_id: str = "", task: str = "") -> dict:
@@ -144,14 +197,14 @@ class BrainService:
         workspace = session["workspace"] if session else vault.workspace(cwd, workspace_root)
         project = vault.match_project(workspace)
         if session and session["project"] != project:
-            session["saved"] = not project
-        session = vault.state(key, {"saved": not project, **(session or {}), "workspace": workspace,
+            session["saved"] = False
+        session = vault.state(key, {"saved": False, **(session or {}), "workspace": workspace,
                                    "project": project, "agent": agent})
         info = vault.project(session["project"]) if session["project"] else None
         result = {"workspace": workspace, "project": session["project"], "independent": not session["project"],
                   "project_directory": str(vault.root / Path(info["path"]).parent) if info else "",
                   "project_context": None, "task": None, "relevant": [],
-                  "guidance": "全局提示词全文遵循。项目会话保存完整总结及进度；独立会话不写总结、任务或决策。安装卸载、工具配置、skills、模型和电脑环境变更由所有会话通过 changes 保存对象、实际位置、当前状态及验证；普通源码修改留在项目。真实失败用 errors；无事项不建记录。search 默认空 project 查全部，项目 ID 查本项目，independent 查公共池，all 查全部。草稿只存放，由用户手动提供，不搜索、不注入、不维护。子代理仅回传。"}
+                  "guidance": "全局提示词全文遵循。所有会话保存完整总结；项目会话另存进度，独立会话不创建项目、任务或决策。安装卸载、工具配置、skills、模型和电脑环境变更由所有会话通过 changes 保存对象、实际位置、当前状态及验证；普通源码修改留在项目。真实失败用 errors；无事项不建记录。search 默认空 project 查全部，项目 ID 查本项目，independent 查公共池，all 查全部。草稿只存放，由用户手动提供，不搜索、不注入、不维护。子代理仅回传。"}
         if info:
             result["project_context"] = {k: info.get(k) for k in ("path", "title", "status", "goal", "next_actions")}
             result["project_context"]["progress"] = info.get("progress", "")[:1600]
@@ -218,7 +271,7 @@ class BrainService:
                     raise ValueError("适用条件须为文本键值表")
         project = session["project"]
         result = {"message": "阶段已保存", "project": project}
-        if project and summary.strip():
+        if summary.strip():
             result["summary"] = vault.save_session(context["session_id"], session["agent"], project, summary, goal)
         if project and any((goal, progress, next_actions is not None, project_status)):
             info = vault.project(project)
@@ -245,7 +298,7 @@ class BrainService:
             result["memory"] = vault.save_memory(project=project, sources=[result["summary"]["path"]] if "summary" in result else [], **memory)
         if changes:
             result["changes"] = [vault.save_change(change, session["agent"], context["session_id"]) for change in changes]
-        session["saved"] = errors_reviewed and (not project or bool(summary.strip()))
+        session["saved"] = errors_reviewed and bool(summary.strip())
         vault.state(key, session)
         vault.refresh()
         return result
@@ -261,7 +314,7 @@ class BrainService:
             return {}
         kind = event.get("event")
         if kind == "start":
-            return {"additionalContext": "调用 Shared Brain bootstrap，传入宿主 session_id、agent、cwd/workspace_root；任务明确时带 task。全局提示词非空则全文加载；项目由应用配置，未匹配直接独立。独立会话不写总结；实际电脑与工具变更用 changes 保存，真实失败用 errors。草稿仅用户手动提供。"}
+            return {"additionalContext": "调用 Shared Brain bootstrap，传入宿主 session_id、agent、cwd/workspace_root；任务明确时带 task。全局提示词非空则全文加载；项目由应用配置，未匹配直接独立。独立会话也保存完整总结；实际电脑与工具变更用 changes 保存，真实失败用 errors。草稿仅用户手动提供。"}
         vault = self._vault()
         key = "session:" + fingerprint(event.get("session_id", ""))
         session = vault.state(key)
@@ -271,11 +324,11 @@ class BrainService:
                 vault.state(reminder_key, {"reminded": False})
             elif kind == "closeout" and not (vault.state(reminder_key) or {}).get("reminded"):
                 vault.state(reminder_key, {"reminded": True})
-                return {"decision": "block", "reason": "请先 bootstrap 加载全局提示词并获取归属。项目保存总结；独立会话仅保存实际变更和错误，无事项不建记录。本轮只提醒一次。"}
+                return {"decision": "block", "reason": "请先 bootstrap 加载全局提示词并获取归属。项目和独立会话均保存完整总结；实际变更和错误按需记录。本轮只提醒一次。"}
             return {}
         session["project"] = vault.match_project(session["workspace"])
         if kind == "turn":
-            session.update(saved=not session["project"], reminded=False)
+            session.update(saved=False, reminded=False)
             vault.state(key, session)
         elif kind == "failure" and event.get("actual_failure") is True and not event.get("expected_probe"):
             item = event.get("error", {})
@@ -290,7 +343,7 @@ class BrainService:
             if not session.get("saved") and not session.get("reminded"):
                 session["reminded"] = True
                 vault.state(key, session)
-                instruction = "保存完整总结及项目进度" if session["project"] else "核对实际电脑与工具变更，用 changes 补充对象记录；不写会话总结"
+                instruction = "保存完整总结及项目进度" if session["project"] else "保存完整会话总结，并用 changes 补充实际电脑与工具变更"
                 return {"decision": "block", "reason": f"请根代理检查实际失败并补全错误记录，{instruction}，再 save(errors_reviewed=true)。无错误不建空报告。本轮只提醒一次。"}
         return {}
 

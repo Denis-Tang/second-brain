@@ -21,6 +21,7 @@ def test_mcp_schema_and_real_local_workflow(tmp_path):
         assert tools["save"].inputSchema["required"] == ["context"]
         assert not {"choice", "project", "project_name"} & tools["bootstrap"].inputSchema["properties"].keys()
         assert tools["bootstrap"].inputSchema["properties"]["task"]["default"] == ""
+        assert tools["search"].inputSchema["properties"]["mode"]["default"] == "auto"
         change = tools["save"].inputSchema["$defs"]["ChangeInput"]
         assert set(change["required"]) == {"object", "action", "location", "state"}
         result = await server.call_tool("bootstrap", {"cwd": str(tmp_path / "workspace"), "session_id": "s1", "agent": "Codex", "task": "验证MCP结果"})
@@ -31,7 +32,7 @@ def test_mcp_schema_and_real_local_workflow(tmp_path):
     asyncio.run(exercise())
 
 
-def test_mcp_independent_changes_are_searchable_without_summary(tmp_path):
+def test_mcp_independent_summary_and_public_changes(tmp_path):
     service, _, _ = setup(tmp_path)
     server = create_server(service.settings.home)
     (tmp_path / "standalone").mkdir()
@@ -48,11 +49,13 @@ def test_mcp_independent_changes_are_searchable_without_summary(tmp_path):
         empty = await call("save", {"context": context, "errors_reviewed": True})
         assert "summary" not in empty
         assert not list((tmp_path / "vault" / "会话总结").rglob("*.md"))
-        saved = await call("save", {"context": context, "changes": [{
+        saved = await call("save", {"context": context, "summary": "安装结果已验证。", "changes": [{
             "object": "MCP测试模型", "action": "安装", "location": str(tmp_path / "models"),
             "state": "已安装", "evidence": "模型成功加载", "conditions": {"runtime": "本机"},
         }], "errors_reviewed": True})
-        assert "summary" not in saved
+        assert saved["summary"]["path"].startswith("会话总结/")
+        meta, body = service._vault().read(tmp_path / "vault" / saved["summary"]["path"])
+        assert meta["project"] == "" and body.strip() == "安装结果已验证。"
         result = await call("search", {"query": "MCP测试模型", "project": "independent"})
         assert result["results"] and "独立项目/独立知识/" in result["results"][0]["path"]
         boot = await call("bootstrap", {"cwd": str(tmp_path / "standalone"), "session_id": "independent", "agent": "Codex", "task": "MCP测试模型"})
@@ -84,6 +87,7 @@ def test_windowed_executable_preserves_stdio_mcp(tmp_path):
                 assert {t.name for t in tools.tools} == {"bootstrap", "save", "search", "feedback", "status"}
                 assert "changes" in next(t for t in tools.tools if t.name == "save").inputSchema["properties"]
                 assert "task" in next(t for t in tools.tools if t.name == "bootstrap").inputSchema["properties"]
+                assert "mode" in next(t for t in tools.tools if t.name == "search").inputSchema["properties"]
                 boot = await session.call_tool("bootstrap", {"cwd": str(tmp_path / "workspace"), "session_id": "s1", "agent": "Codex"})
                 assert not boot.isError
                 assert json.loads(boot.content[0].text)["project"] == started["project"]

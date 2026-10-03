@@ -31,7 +31,7 @@ await handlers.get(EVENT)({agent: child});
 assert.equal(injected.length, 1);
 assert.match(injected[0].content[0].text, /root_session_id/);
 assert.match(injected[0].content[0].text, /task=当前任务描述/);
-assert.match(injected[0].content[0].text, /独立会话不写总结/);
+assert.match(injected[0].content[0].text, /独立会话也 save 完整 summary/);
 assert.match(injected[0].content[0].text, /save changes/);
 const preStep = handlers.get('agent/pre-step'), stop = handlers.get('agent/turn-stopping');
 await preStep({agent, messages: [{id: 'user-one', source: {kind: 'user'}}]}, async () => ({kind: 'enter'}));

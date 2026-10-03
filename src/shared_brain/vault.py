@@ -5,6 +5,7 @@ import json
 import re
 import sqlite3
 import os
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
@@ -22,16 +23,58 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def search_terms(query: str) -> list[str]:
+CJK = r"\u3400-\u4dbf\u4e00-\u9fff"
+CJK_RE = re.compile(f"[{CJK}]")
+STOP_TERMS = {"怎么", "然后", "一直"}
+# A query reads as code when it looks like an identifier, a path or a file name.
+CODE_HINT = re.compile(
+    r"[\\/]|::|\w+_\w+|[a-z]+[A-Z]|"
+    r"\w+\.(?:py|js|mjs|cjs|ts|tsx|jsx|md|json|toml|ya?ml|ini|cfg|cs|ps1|sh|bat|cmd|exe|zip|sql|html|css|txt)\b|"
+    r"\w+\(\)"
+)
+# Scoring happens in SQL, so a very long task keeps only its useful tail.
+MAX_SCORE_TERMS = 128
+# A timestamp this close to the previous scan cannot be trusted on coarse filesystems.
+RACY_WINDOW_NS = 2_000_000_000
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough token estimate: ASCII counts about four characters per token, CJK one each."""
+    body = text.strip()
+    ascii_count = sum(char.isascii() for char in body)
+    return (ascii_count + 3) // 4 + len(body) - ascii_count
+
+
+def detect_mode(query: str, mode: str = "auto") -> str:
+    """An explicit mode wins; otherwise Chinese reads as prose and code-shaped queries as code."""
+    if mode in {"text", "code"}:
+        return mode
+    if CJK_RE.search(query):
+        return "text"
+    return "code" if CODE_HINT.search(query) else "text"
+
+
+def _split_identifier(token: str) -> list[str]:
+    """Split camelCase, snake_case and dotted or slashed identifiers into searchable pieces."""
+    pieces = []
+    for chunk in re.split(r"[_\-.]+", token):
+        if chunk:
+            pieces.extend(re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", chunk) or [chunk])
+    return pieces
+
+
+def search_terms(query: str, mode: str = "text") -> list[str]:
     terms = []
-    for token in re.findall(r"\w+", query.casefold()):
-        for part in re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]+|[^\u3400-\u4dbf\u4e00-\u9fff]+", token):
-            if re.match(r"[\u3400-\u4dbf\u4e00-\u9fff]", part):
+    for token in re.findall(r"\w+", query):
+        for part in re.findall(f"[{CJK}]+|[^{CJK}]+", token):
+            if CJK_RE.match(part):
                 terms.extend(part[index:index + 2] for index in range(max(1, len(part) - 1)))
-            else:
-                terms.append(part)
+                continue
+            terms.append(part.casefold())
+            if mode == "code":
+                terms.extend(piece.casefold() for piece in _split_identifier(part) if len(piece) >= 2)
     # Keep the useful tail of a 500-character task, even when every bigram is distinct.
-    return list(dict.fromkeys(term for term in terms if term not in {"怎么", "然后", "一直"}))[:512]
+    return list(dict.fromkeys(term for term in terms if term not in STOP_TERMS))[:512]
 
 
 class Vault:
@@ -52,6 +95,9 @@ class Vault:
                 path TEXT PRIMARY KEY, title TEXT, kind TEXT, project TEXT,
                 verified INTEGER, body TEXT, hash TEXT, metadata TEXT
             );
+            CREATE TABLE IF NOT EXISTS file_state (
+                path TEXT PRIMARY KEY, mtime INTEGER, size INTEGER, tokens INTEGER
+            );
             CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(path UNINDEXED, text, tokenize='trigram');
             CREATE TABLE IF NOT EXISTS processed (path TEXT PRIMARY KEY, hash TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -60,11 +106,27 @@ class Vault:
             );
             CREATE TABLE IF NOT EXISTS daily_writes (day TEXT PRIMARY KEY, tokens INTEGER NOT NULL);
         """)
+        self._migrate(con)
         try:
             with con:
                 yield con
         finally:
             con.close()
+
+    @staticmethod
+    def _migrate(con):
+        """Change detection lives in its own table so ``notes`` stays writable by older builds.
+
+        Notes rows use positional inserts in shipped versions, so an extra column there would
+        break every older copy that shares the same home. A preview build did add those
+        columns; drop them again so the index works with both.
+        """
+        con.execute("CREATE TABLE IF NOT EXISTS file_state "
+                    "(path TEXT PRIMARY KEY, mtime INTEGER, size INTEGER, tokens INTEGER)")
+        columns = {row[1] for row in con.execute("PRAGMA table_info(notes)")}
+        for name in ("mtime", "size", "tokens"):
+            if name in columns:
+                con.execute(f"ALTER TABLE notes DROP COLUMN {name}")
 
     def read(self, path: Path, text: str | None = None) -> tuple[dict, str]:
         if text is None:
@@ -323,51 +385,101 @@ class Vault:
         target.parent.mkdir(parents=True, exist_ok=True)
         return self.write(relative, {"kind": "source", "title": source.stem, "original_name": source.name}, body)
 
+    def _markdown_files(self):
+        """Walk the indexed folders with scandir; only directory metadata is read, never contents."""
+        for folder in ("项目", "知识", "资料", "会话总结", "技能"):
+            stack = [self.root / folder]
+            while stack:
+                try:
+                    entries = list(os.scandir(stack.pop()))
+                except OSError:
+                    continue
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(Path(entry.path))
+                            continue
+                        if not entry.name.lower().endswith(".md") or not entry.is_file(follow_symlinks=False):
+                            continue
+                        path = Path(entry.path)
+                        if path == self.root / "知识" / "全局提示词.md":
+                            continue
+                        stat = entry.stat()
+                    except OSError:
+                        continue
+                    yield path.relative_to(self.path).as_posix(), stat.st_mtime_ns, stat.st_size
+
     def refresh(self):
         with self.connect() as con:
+            started_ns = time.time_ns()
+            previous_run = con.execute("SELECT value FROM state WHERE key='refreshed_at'").fetchone()
+            racy_before = int(json.loads(previous_run[0])) if previous_run else started_ns + 1
             tracking = con.execute("SELECT value FROM state WHERE key='daily_writes_since'").fetchone()
             day = datetime.fromisoformat(now()).astimezone().date().isoformat()
             added_tokens = 0
             found = set()
-            previous = {row["path"]: row for row in con.execute("SELECT path,hash,body FROM notes")}
-            for folder in ("项目", "知识", "资料", "会话总结", "技能"):
-                for path in (self.root / folder).rglob("*.md"):
-                    if path == self.root / "知识" / "全局提示词.md":
-                        continue
-                    relative = path.relative_to(self.path).as_posix()
-                    text = path.read_text(encoding="utf-8-sig")
-                    digest = fingerprint(text)
-                    old = previous.get(relative)
-                    if old is not None and old["hash"] == digest:
-                        found.add(relative)
-                        continue
-                    metadata, body = self.read(path, text)
-                    if metadata.get("shared_brain") is not True:
-                        continue
-                    if tracking:
-                        before = old["body"] if old is not None else ""
-                        added = "".join(body[j:k] for tag, _, _, j, k in SequenceMatcher(None, before, body).get_opcodes()
-                                        if tag in {"insert", "replace"})
-                        ascii_count = sum(char.isascii() for char in added.strip())
-                        added_tokens += (ascii_count + 3) // 4 + len(added.strip()) - ascii_count
+            previous = {row["path"]: row for row in
+                        con.execute("SELECT n.path,n.hash,f.mtime,f.size,f.tokens FROM notes n "
+                                    "LEFT JOIN file_state f ON f.path=n.path")}
+            for relative, mtime, size in self._markdown_files():
+                old = previous.get(relative)
+                # A file written around the previous scan cannot be judged by stat alone,
+                # the same reasoning as git's racy-index check.
+                racy = mtime + RACY_WINDOW_NS >= racy_before
+                if (old is not None and not racy and old["mtime"] == mtime and old["size"] == size
+                        and old["tokens"] is not None):
                     found.add(relative)
-                    con.execute("INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?)", (
-                        relative, metadata.get("title", path.stem), metadata.get("kind", "memory"),
-                        metadata.get("project", ""), int(metadata.get("verified") is True), body, digest,
-                        json.dumps(metadata, ensure_ascii=False, default=str),
-                    ))
+                    continue
+                path = self.root / relative
+                try:
+                    text = path.read_text(encoding="utf-8-sig")
+                except OSError:
+                    continue
+                digest = fingerprint(text)
+                if old is not None and old["hash"] == digest:
+                    # Same content, new timestamps: refresh the cheap row only.
+                    _, body = self.read(path, text)
+                    con.execute("INSERT OR REPLACE INTO file_state VALUES (?,?,?,?)",
+                                (relative, mtime, size, estimate_tokens(body)))
+                    found.add(relative)
+                    continue
+                metadata, body = self.read(path, text)
+                if metadata.get("shared_brain") is not True:
+                    con.execute("DELETE FROM notes WHERE path=?", (relative,))
                     con.execute("DELETE FROM search WHERE path=?", (relative,))
-                    con.execute("INSERT INTO search VALUES (?,?)", (relative, metadata.get("title", "") + "\n" + body))
+                    con.execute("DELETE FROM file_state WHERE path=?", (relative,))
+                    continue
+                if tracking:
+                    row = con.execute("SELECT body FROM notes WHERE path=?", (relative,)).fetchone()
+                    before = row["body"] if row else ""
+                    added = "".join(body[j:k] for tag, _, _, j, k in SequenceMatcher(None, before, body).get_opcodes()
+                                    if tag in {"insert", "replace"})
+                    added_tokens += estimate_tokens(added)
+                found.add(relative)
+                con.execute("INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?)", (
+                    relative, metadata.get("title", path.stem), metadata.get("kind", "memory"),
+                    metadata.get("project", ""), int(metadata.get("verified") is True), body, digest,
+                    json.dumps(metadata, ensure_ascii=False, default=str),
+                ))
+                con.execute("INSERT OR REPLACE INTO file_state VALUES (?,?,?,?)",
+                            (relative, mtime, size, estimate_tokens(body)))
+                con.execute("DELETE FROM search WHERE path=?", (relative,))
+                con.execute("INSERT INTO search VALUES (?,?)", (relative, relative + "\n" + metadata.get("title", path.stem) + "\n" + body))
             for path in previous.keys() - found:
                 con.execute("DELETE FROM notes WHERE path=?", (path,))
                 con.execute("DELETE FROM search WHERE path=?", (path,))
-            sessions = memories = tokens = 0
-            for row in con.execute("SELECT kind,body FROM notes"):
+                con.execute("DELETE FROM file_state WHERE path=?", (path,))
+            if not con.execute("SELECT 1 FROM state WHERE key='search_includes_path'").fetchone():
+                con.execute("DELETE FROM search")
+                con.execute("INSERT INTO search SELECT path,path || char(10) || title || char(10) || body FROM notes")
+                con.execute("INSERT OR IGNORE INTO state VALUES ('search_includes_path','true')")
+            con.execute("INSERT OR REPLACE INTO state VALUES ('refreshed_at',?)", (json.dumps(started_ns),))
+            sessions = memories = 0
+            for row in con.execute("SELECT kind FROM notes"):
                 sessions += row["kind"] == "session"
                 memories += row["kind"] in {"memory", "skill", "object"}
-                body = row["body"].strip()
-                ascii_count = sum(char.isascii() for char in body)
-                tokens += (ascii_count + 3) // 4 + len(body) - ascii_count
+            tokens = con.execute("SELECT coalesce(sum(f.tokens),0) FROM notes n "
+                                 "LEFT JOIN file_state f ON f.path=n.path").fetchone()[0]
             latest = con.execute("SELECT sessions,memories,estimated_tokens FROM observations ORDER BY rowid DESC LIMIT 1").fetchone()
             totals = (sessions, memories, tokens)
             if latest is None or tuple(latest) != totals:
@@ -414,11 +526,20 @@ class Vault:
             for key, label, unit in metrics
         ]}
 
-    def search(self, query: str, project: str = "", limit: int = 5, kinds=None):
-        terms = search_terms(query)
+    def search(self, query: str, project: str = "", limit: int = 5, kinds=None, mode: str = "auto"):
+        """Route the query, score matches in SQLite and return at most ``limit`` rows.
+
+        Scoring never leaves SQLite: only the surviving rows are loaded, so a common term no
+        longer pulls every matching body into Python.
+        """
+        resolved = detect_mode(query, mode)
+        terms = search_terms(query, resolved)
+        if len(terms) > MAX_SCORE_TERMS:
+            # A 500-character task can contribute hundreds of bigrams; the instruction sits at the end.
+            terms = terms[-MAX_SCORE_TERMS:]
         if not terms:
             return []
-        chinese = bool(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", query))
+        chinese = bool(CJK_RE.search(query))
         minimum = 2 if chinese and len(terms) >= 3 else 1
         self.refresh()
         scope = "" if project in {"", "all"} else " AND n.project=?"
@@ -426,48 +547,67 @@ class Vault:
         if kinds:
             scope += " AND n.kind IN (" + ",".join("?" for _ in kinds) + ")"
             parameters += list(kinds)
+        title_weight = 4 if resolved == "code" else 3
+        path_weight = 3 if resolved == "code" else 1
+        score_parts, coverage_parts, values = [], [], []
+        for term in terms:
+            score_parts.append(f"((instr(lower(n.title), ?) > 0) * {title_weight}"
+                               f" + (instr(lower(n.path), ?) > 0) * {path_weight}"
+                               " + (instr(lower(n.body), ?) > 0))")
+            coverage_parts.append("((instr(lower(n.title), ?) > 0)"
+                                  " OR (instr(lower(n.path), ?) > 0)"
+                                  " OR (instr(lower(n.body), ?) > 0))")
+            values += [term, term, term]
+        indexed = not chinese and all(len(term) >= 3 for term in terms)
+        sql = (f"SELECT n.path,n.title,n.kind,n.project,n.verified,n.metadata,n.body,"
+               f"({'+'.join(score_parts)}) AS score,({'+'.join(coverage_parts)}) AS coverage FROM notes n")
+        if indexed:
+            expression = " OR ".join('"' + term.replace('"', '""') + '"' for term in terms)
+            sql += " JOIN search ON search.path=n.path AND search MATCH ?"
+        sql += (" WHERE coverage>=?"
+                " AND coalesce(json_extract(n.metadata,'$.feedback_pending'),0)!=1"
+                " AND coalesce(json_extract(n.metadata,'$.merged_into'),'')=''" + scope +
+                " ORDER BY score DESC,coverage DESC,n.verified DESC,(n.kind='memory') DESC,"
+                "length(n.body),n.path LIMIT ?")
+        arguments = values + values
+        if indexed:
+            arguments.append(expression)
+        arguments += [minimum, *parameters, max(1, limit)]
         with self.connect() as con:
-            if not chinese and all(len(t) >= 3 for t in terms):
-                expression = " OR ".join('"' + t.replace('"', '""') + '"' for t in terms)
-                rows = con.execute("SELECT n.* FROM search JOIN notes n ON n.path=search.path "
-                                   "WHERE search MATCH ?" + scope +
-                                   " ORDER BY rank,n.verified DESC,(n.kind='memory') DESC",
-                                   (expression, *parameters)).fetchall()
-            else:
-                score = " + ".join("(instr(lower(title || ' ' || body), lower(?))>0)" for _ in terms)
-                rows = con.execute(f"SELECT n.*, ({score}) AS score FROM notes n WHERE score>=?" + scope,
-                                   (*terms, minimum, *parameters)).fetchall()
-                rows = sorted(rows, key=lambda row: (
-                    -row["score"],
-                    -row["verified"], row["path"]))
+            rows = con.execute(sql, arguments).fetchall()
         result = []
         for row in rows:
             metadata = json.loads(row["metadata"])
-            if metadata.get("feedback_pending") or metadata.get("merged_into"):
-                continue
             body = row["body"]
-            positions = [body.casefold().find(t.casefold()) for t in terms]
+            positions = [body.casefold().find(term.casefold()) for term in terms]
             start = max(0, min((p for p in positions if p >= 0), default=0) - 60)
             result.append({"path": row["path"], "title": row["title"][:160], "kind": row["kind"],
                            "project": row["project"], "conditions": metadata.get("conditions", {}),
                            "evidence": metadata.get("evidence", ""), "sources": metadata.get("sources", []),
-                           "verified": bool(row["verified"]), "conflict": metadata.get("conflict", False), "text": body[start:start + 600]})
+                           "verified": bool(row["verified"]), "conflict": metadata.get("conflict", False),
+                           "text": body[start:start + 600]})
             if row["kind"] == "object":
                 result[-1].update(location=metadata.get("location", ""), current_state=metadata.get("current_state", ""))
-            if len(result) == limit:
-                break
         return result
 
+    PENDING_MATCH = ("((n.kind='session' AND n.project!='') OR "
+                     "(n.kind IN ('memory','object') AND n.path LIKE '项目/%') OR "
+                     "(n.kind='skill' AND n.path LIKE '技能/%/%/SKILL.md')) "
+                     "AND (p.hash IS NULL OR p.hash != n.hash)")
+
     def pending(self):
-        self.refresh()
+        """Unprocessed material according to the current index; callers refresh when they need it fresh."""
         with self.connect() as con:
             return [dict(r) for r in con.execute(
                 "SELECT n.* FROM notes n LEFT JOIN processed p ON n.path=p.path "
-                "WHERE ((n.kind='session' AND n.project!='') OR "
-                "(n.kind IN ('memory','object') AND n.path LIKE '项目/%') OR "
-                "(n.kind='skill' AND n.path LIKE '技能/%/%/SKILL.md')) "
-                "AND (p.hash IS NULL OR p.hash != n.hash) "
-                "ORDER BY json_extract(n.metadata,'$.created'),n.path")]
+                "WHERE " + self.PENDING_MATCH +
+                " ORDER BY json_extract(n.metadata,'$.created'),n.path")]
+
+    def pending_count(self):
+        """Just the amount of unprocessed material, without loading any note body."""
+        with self.connect() as con:
+            return con.execute("SELECT count(*) FROM notes n LEFT JOIN processed p ON n.path=p.path "
+                               "WHERE " + self.PENDING_MATCH).fetchone()[0]
 
     def mark_processed(self, rows: list[dict], receipt: dict):
         with self.connect() as con:

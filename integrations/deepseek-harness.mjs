@@ -33,8 +33,8 @@ export function apply(ctx, config) {
 当前宿主根身份 context=${JSON.stringify(identity(agent))}。
 调用 mcp__shared_brain__bootstrap，参数 ${JSON.stringify(args)}。项目由应用的项目配置决定，未匹配路径直接作为独立会话；项目资料目录见 project_directory，不询问或自行创建项目。
 任务明确后带 task=当前任务描述重新 bootstrap，描述不超过500字符；遵循全文 global_prompt，参考少量 relevant，其他按需 search。项目默认传项目 ID，独立会话留空搜全部；project="independent" 只搜公共池，"all" 搜全部。核对来源与条件。草稿只由用户提供，不自动检索或整理。
-项目会话 save 完整 summary 与项目进度；独立会话不写总结、卡、决策或单独 memory。所有会话发生安装/卸载、工具配置、skills、模型、PATH/代理等环境变更时，save changes 数组，每项 object/action/location/state，附实际 evidence/conditions，更新公共对象状态与历史；普通源码修改留在项目记录。
-收尾核对变更与实际错误后 errors_reviewed=true；独立会话无事项可只 save(context,errors_reviewed=true)，不生成空文件。全局提示词仅用户编辑，生成技能不自动安装执行；子代理只回传。`));
+项目会话 save 完整 summary 与项目进度；独立会话也 save 完整 summary，但不创建项目、任务卡、决策或单独 memory。所有会话发生安装/卸载、工具配置、skills、模型、PATH/代理等环境变更时，save changes 数组，每项 object/action/location/state，附实际 evidence/conditions，更新公共对象状态与历史；普通源码修改留在项目记录。
+收尾核对变更与实际错误后 errors_reviewed=true；独立会话同样 save(context,summary=完整总结,errors_reviewed=true)，无变更或错误不生成空对象或错误报告。全局提示词仅用户编辑，生成技能不自动安装执行；子代理只回传。`));
   });
   ctx.on("agent/pre-step", async ({ agent, messages }, next) => {
     if (isRoot(agent)) {

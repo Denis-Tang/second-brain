@@ -27,7 +27,7 @@ def test_prompt_embeds_runtime_paths_and_valid_mcp_json_without_writing(tmp_path
     assert "native-hooks.mjs" in prompt and "已有适配优先使用" in prompt
     assert "task=当前任务描述" in prompt
     assert 'project="independent"' in prompt and 'project="all"' in prompt
-    assert "独立会话不写总结" in prompt and "save(changes=[...])" in prompt
+    assert "独立会话也保存完整总结" in prompt and "save(changes=[...])" in prompt
     assert "草稿不自动加载、检索或夜间整理" in prompt
     assert "不要重复初始化、重建 Obsidian 架构" in prompt
     assert "已有相同 shared_brain 接入则复用" in prompt

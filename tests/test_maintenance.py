@@ -345,6 +345,7 @@ def test_generated_update_without_full_old_body_keeps_note_and_queue(tmp_path, m
     service, context, started = setup(tmp_path)
     vault = service._vault()
     saved = vault.save_memory("pool timeout", "pool timeout 旧条件和步骤。\n" * 500, project=started["project"], generated=True)
+    vault.refresh()
     vault.mark_processed(vault.pending(), {})
     original = (vault.root / saved["path"]).read_bytes()
     summary = service.save(context, summary="pool timeout 调整后成功。")

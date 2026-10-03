@@ -83,6 +83,8 @@ def settle(home, request_id, usage, started):
 
 def maintain(service):
     vault = service._vault()
+    # status() no longer rescans the vault, so maintenance refreshes the index itself.
+    vault.refresh()
     reports = ErrorReports(vault)
     receipt = {"processed": 0, "memories": 0, "model_calls": 0, "message": "没有新增资料，无需调用模型"}
     for _ in range(NIGHT_CALLS):
