@@ -322,6 +322,15 @@ def test_hidden_desktop_window_is_restored_without_starting_another(monkeypatch)
     window = user.CreateWindowExW(0, "STATIC", "Shared Brain", 0x00CF0000, 0, 0, 100, 100,
                                   None, None, None, None)
     assert window
+    load_library = ctypes.WinDLL
+
+    def isolated_library(name, **kwargs):
+        library = load_library(name, **kwargs)
+        if name == "user32":
+            library.FindWindowW = lambda _, title: window if title == "Shared Brain" else None
+        return library
+
+    monkeypatch.setattr(ctypes, "WinDLL", isolated_library)
     calls = []
     monkeypatch.setattr(desktop, "_run_desktop", lambda home: calls.append(home))
     try:
