@@ -38,12 +38,12 @@ const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:a
 const elements = new Map();
 const get = id => {
   if (!elements.has(id)) elements.set(id, {value: '', checked: false, dataset: {},
-    classList: {toggle() {}}, addEventListener(event, fn) {this[event] = fn;}});
+    getContext() {return {};}, classList: {toggle() {}}, addEventListener(event, fn) {this[event] = fn;}});
   return elements.get(id);
 };
 let submitted;
 const settings = {vault_path: 'D:/vault', base_url: 'https://api.deepseek.com', model: 'deepseek-flash', maintenance_time: '03:00'};
-const context = {document: {getElementById: get, querySelectorAll: () => []},
+const context = {ResizeObserver: class {observe() {}}, IntersectionObserver: class {observe() {}}, document: {addEventListener() {}, getElementById: get, querySelectorAll: () => []},
   window: {addEventListener() {}, desktop: {
     configure: async values => {submitted = values; return {message: 'saved'};},
     status: async () => ({settings, ready: false})}},
@@ -91,13 +91,13 @@ const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:a
 const elements = new Map(), saves = [], configurations = [], copied = [];
 const get = id => {
   if (!elements.has(id)) elements.set(id, {value: '', checked: false, dataset: {},
-    classList: {toggle() {}}, addEventListener(event, fn) {this[event] = fn;}});
+    getContext() {return {};}, classList: {toggle() {}}, addEventListener(event, fn) {this[event] = fn;}});
   return elements.get(id);
 };
 let state = {ready: true, global_prompt: '旧库提示词', settings: {
   vault_path: 'D:/old', base_url: 'https://api.example.com', model: 'example', maintenance_time: '02:00'}};
 const copyButtons = ['data-copy-vault', 'data-copy-agent', 'data-copy-unbind'];
-const context = {document: {getElementById: get,
+const context = {ResizeObserver: class {observe() {}}, IntersectionObserver: class {observe() {}}, document: {addEventListener() {}, getElementById: get,
   querySelectorAll: selector => copyButtons.filter(name => selector.includes(name)).map(get)},
   window: {addEventListener() {}, desktop: {
     status: async () => state,
@@ -155,12 +155,12 @@ def test_project_editor_separates_creation_editing_and_confirmed_deletion():
     script = r'''
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
 const elements = new Map(), calls = [], projects = [], deletions = [], copied = [];
-const element = () => ({value: '', dataset: {}, children: [], classList: {toggle() {}},
+const element = () => ({value: '', dataset: {}, children: [], getContext() {return {};}, classList: {toggle() {}},
   get lastChild() {return this.children[this.children.length - 1];},
   addEventListener(event, fn) {this[event] = fn;}, append(...items) {this.children.push(...items);},
   replaceChildren() {this.children = [];}, focus() {}, showModal() {this.open = true;}, close() {this.open = false;}});
 const get = id => {if (!elements.has(id)) elements.set(id, element()); return elements.get(id);};
-const context = {document: {getElementById: get, querySelectorAll: () => [], createElement: element},
+const context = {ResizeObserver: class {observe() {}}, IntersectionObserver: class {observe() {}}, document: {addEventListener() {}, getElementById: get, querySelectorAll: () => [], createElement: element},
   window: {addEventListener() {}, desktop: {
     projects: async () => ({projects}),
     delete_project: async id => {
@@ -355,14 +355,14 @@ def test_version_chip_checks_updates_downloads_and_copies_the_agent_prompt():
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
 const elements = new Map(), copied = [], opened = [], folders = [], applied = [];
 const element = () => ({value: '', textContent: '', hidden: false, open: false, disabled: false, checked: false,
-  dataset: {}, children: [], style: {}, classList: {toggle() {}},
+  dataset: {}, children: [], style: {}, getContext() {return {};}, classList: {toggle() {}},
   addEventListener(event, fn) {this[event] = fn;},
   append(...items) {this.children.push(...items);}, replaceChildren() {this.children = [];},
   showModal() {this.open = true;}, close() {this.open = false;}});
 const get = id => {if (!elements.has(id)) elements.set(id, element()); return elements.get(id);};
 let reply = null, applyReply = {started: true, message: '正在退出并替换，程序稍后会自动重启。'},
   downloadState = {stage: 'idle', message: '', percent: 0, path: ''};
-const context = {document: {getElementById: get, querySelectorAll: () => [], createElement: element},
+const context = {ResizeObserver: class {observe() {}}, IntersectionObserver: class {observe() {}}, document: {addEventListener() {}, getElementById: get, querySelectorAll: () => [], createElement: element},
   window: {addEventListener() {}, matchMedia: () => ({matches: false}), desktop: {
     status: async () => ({ready: true, version: '0.4.4', global_prompt: '', budget: null,
       settings: {vault_path: 'D:/vault', base_url: 'https://api.deepseek.com', model: 'deepseek-flash'}}),
@@ -463,4 +463,25 @@ const click = id => get(id).click({currentTarget: get(id)});
 '''
     result = subprocess.run([shutil.which("node"), "-e", script, str(root / "src/shared_brain/web/app.js")],
                             capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_terrain_draws_closed_columns_from_all_four_directions():
+    script = r'''
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const elements=new Map(),drawing={setTransform(){},clearRect(){},beginPath(){},lineTo(){},moveTo(){},closePath(){},fill(){}};
+const get=id=>{if(!elements.has(id))elements.set(id,{getContext:()=>drawing,getBoundingClientRect:()=>({width:640,height:280}),classList:{toggle(){}}});return elements.get(id)};
+const context={$:get,devicePixelRatio:1.5,document:{addEventListener(){}},ResizeObserver:class{observe(){}},IntersectionObserver:class{observe(){}}};
+vm.createContext(context);
+const source=fs.readFileSync(process.argv[1],'utf8');
+vm.runInContext(source.slice(source.indexOf('let terrainDays=')),context);
+vm.runInContext(`terrainDays=Array.from({length:364},(_,i)=>({height:3+i%49,color:'#34d399',value:i}));
+for(const a of [-18,72,162,252]){shownAngle=a;drawTerrain();
+if(terrainFaces.length!==1092)throw Error('Missing column faces');
+for(const face of terrainFaces)if(face.vertices.length!==4||face.vertices.flat().some(n=>!Number.isFinite(n)))throw Error('Invalid closed face');}
+`,context);
+assert.equal(get('terrain').width,960);
+'''
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run([shutil.which("node"), "-e", script, str(root / "src/shared_brain/web/app.js")], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

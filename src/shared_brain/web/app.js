@@ -149,7 +149,7 @@ function heatTip(e,item){
 }
 
 function renderHeatmap(activity){
-  $("heat-grid").replaceChildren();$("terrain").replaceChildren();$("tooltip").hidden=true;
+  $("heat-grid").replaceChildren();$("tooltip").hidden=true;
   const colors=['#ebedf0','#a7f3d0','#6ee7b7','#34d399','#10b981'];
   const values=new Map(activity.days.map(d=>[d.day,d.tokens]));
   const localDay=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -162,10 +162,10 @@ function renderHeatmap(activity){
     if(i%182===0||(d.date.slice(8)==='01'&&week<24)){const month=document.createElement('span');month.textContent=Number(d.date.slice(5,7))+'月';month.style.gridColumn=week+1;section.firstElementChild.append(month)}
     const cell=document.createElement('button');cell.className='heat-cell';cell.style.background=colors[level];cell.classList.toggle('unrecorded',d.value===null);
     cell.setAttribute('aria-label',`${d.date} ${d.value===null?'未记录':d.value+' token'}`);cell.onpointermove=e=>heatTip(e,d);cell.onpointerleave=()=>$("tooltip").hidden=true;section.lastElementChild.append(cell);
-    const bar=document.createElement('div');bar.className='column';bar.style.cssText=`grid-column:${week+1};grid-row:${half*8+i%7+1};--height:${3+(d.value||0)/max*48}px;--color:${colors[level]}`;
-    bar.innerHTML='<span class="top"></span><span class="front"></span><span class="side"></span>';bar.classList.toggle('unrecorded',d.value===null);
-    bar.onpointermove=e=>heatTip(e,d);bar.onpointerleave=()=>$("tooltip").hidden=true;$("terrain").append(bar);
+
   });
+  terrainDays=days.map(d=>({...d,height:3+(d.value||0)/max*48,color:colors[d.value?Math.max(1,Math.ceil(d.value/max*4)):0]}));
+  transform();
   $("heat-period").textContent="过去 52 周";
   $("growth-note").textContent=activity.since?`新增 token 从 ${activity.since} 开始记录，斜纹日期尚无记录。`:"选择知识库后，开始记录每天新增的内容。";
 }
@@ -545,6 +545,42 @@ $("project-form").addEventListener("submit", (event) => {
   });
 });
 
+let terrainDays=[],terrainFaces=[],terrainVisible=false;
+const terrain=$('terrain'),terrainContext=terrain.getContext('2d');
+function drawTerrain(){
+  const rect=terrain.getBoundingClientRect(),ratio=Math.min(devicePixelRatio,2);
+  const width=Math.round(rect.width*ratio),height=Math.round(rect.height*ratio);
+  if(terrain.width!==width||terrain.height!==height){terrain.width=width;terrain.height=height}
+  terrainContext.setTransform(ratio,0,0,ratio,0,0);
+  terrainContext.clearRect(0,0,rect.width,rect.height);
+  const a=shownAngle*Math.PI/180,t=shownTilt*Math.PI/180;
+  const ca=Math.cos(a),sa=Math.sin(a),ct=Math.cos(t),st=Math.sin(t);
+  const zoom=Math.min(1,(rect.width-24)/420)*shownScale;
+  const project=([x,y,z])=>{const rx=x*ca-y*sa,ry=x*sa+y*ca;return [rect.width/2+rx*zoom,rect.height/2+(ry*ct-z*st)*zoom,ry*st+z*ct]};
+  terrainFaces=[];
+  // Select the two sides facing the camera, plus the top, for every solid column.
+  const sides=[[[0,1,5,4],-ca*st],[[1,2,6,5],sa*st],[[2,3,7,6],ca*st],[[3,0,4,7],-sa*st]];
+  terrainDays.forEach((day,i)=>{
+    const x=Math.floor(i%182/7)*14-181,y=(Math.floor(i/182)*8+i%7)*14-103,h=day.height;
+    const points=[[x,y,0],[x+11,y,0],[x+11,y+11,0],[x,y+11,0],[x,y,h],[x+11,y,h],[x+11,y+11,h],[x,y+11,h]].map(project);
+    for(const [indices,light] of [[[4,5,6,7],1],...sides.filter(s=>s[1]>0)]){
+      const vertices=indices.map(j=>points[j]);
+      terrainFaces.push({vertices,depth:vertices.reduce((sum,p)=>sum+p[2],0)/4,day,shade:indices[0]===4?0:.16+(1-light)*.12});
+    }
+  });
+  terrainFaces.sort((a,b)=>a.depth-b.depth);
+  for(const face of terrainFaces){
+    terrainContext.beginPath();face.vertices.forEach((p,i)=>i?terrainContext.lineTo(p[0],p[1]):terrainContext.moveTo(p[0],p[1]));terrainContext.closePath();
+    terrainContext.fillStyle=face.day.color;terrainContext.fill();
+    if(face.shade){terrainContext.fillStyle=`rgba(20,55,40,${face.shade})`;terrainContext.fill()}
+    if(face.day.value===null){terrainContext.save();terrainContext.clip();terrainContext.strokeStyle='#80958d66';terrainContext.lineWidth=1;
+      const xs=face.vertices.map(p=>p[0]),ys=face.vertices.map(p=>p[1]),left=Math.min(...xs),right=Math.max(...xs),top=Math.min(...ys),bottom=Math.max(...ys);
+      for(let x=left-(bottom-top);x<right;x+=5){terrainContext.beginPath();terrainContext.moveTo(x,top);terrainContext.lineTo(x+bottom-top,bottom);terrainContext.stroke()}terrainContext.restore()}
+  }
+}
+new ResizeObserver(()=>transform()).observe($('heat3d'));
+new IntersectionObserver(entries=>{terrainVisible=entries[0].isIntersecting;transform()}).observe($('heat3d'));
+document.addEventListener('visibilitychange',()=>transform());
 let angle=-18,tilt=58,scale=1,auto=false,drag=null;
 let shownAngle=angle,shownTilt=tilt,shownScale=scale,speed=0,pending=0,last=0;
 
@@ -552,13 +588,13 @@ function transform(){if(!pending){last=performance.now();pending=requestAnimatio
 function frame(at){
   const dt=Math.min(at-last,64),mix=window.matchMedia('(prefers-reduced-motion:reduce)').matches?1:1-Math.exp(-dt/55);
   last=at;
-  const targetSpeed=auto&&!drag&&!$('heat3d').hidden ? .008 : 0;
+  const targetSpeed=auto&&!drag&&terrainVisible&&!document.hidden&&!$('heat3d').hidden ? .008 : 0;
   speed+=(targetSpeed-speed)*(window.matchMedia('(prefers-reduced-motion:reduce)').matches?1:1-Math.exp(-dt/180));
   if(!drag&&!$('heat3d').hidden)angle+=speed*dt;
   shownAngle+=(angle-shownAngle)*mix;shownTilt+=(tilt-shownTilt)*mix;shownScale+=(scale-shownScale)*mix;
   const moving=Math.abs(angle-shownAngle)>.01||Math.abs(tilt-shownTilt)>.01||Math.abs(scale-shownScale)>.0001||Math.abs(speed)>.00001;
   if(!moving){shownAngle=angle;shownTilt=tilt;shownScale=scale;speed=0}
-  $('terrain').style.transform=`scale(${shownScale}) rotateX(${shownTilt}deg) rotateZ(${shownAngle}deg)`;
+  if(!$('heat3d').hidden&&terrainVisible&&!document.hidden)drawTerrain();
   pending=moving||targetSpeed?requestAnimationFrame(frame):0;
 }
 for(const view of ['2d','3d'])$('view-'+view).onclick=()=>{
@@ -566,7 +602,12 @@ for(const view of ['2d','3d'])$('view-'+view).onclick=()=>{
   $('view-2d').classList.toggle('active',view==='2d');$('view-3d').classList.toggle('active',view==='3d');$('tooltip').hidden=true;transform();
 };
 $('heat3d').onpointerdown=e=>{drag={x:e.clientX,y:e.clientY,angle,tilt};$('heat3d').setPointerCapture(e.pointerId);transform()};
-$('heat3d').onpointermove=e=>{if(drag){angle=drag.angle+(e.clientX-drag.x)*.4;tilt=Math.max(15,Math.min(80,drag.tilt-(e.clientY-drag.y)*.3));transform();$('tooltip').hidden=true}};
+$('heat3d').onpointermove=e=>{if(drag){angle=drag.angle+(e.clientX-drag.x)*.4;tilt=Math.max(15,Math.min(80,drag.tilt-(e.clientY-drag.y)*.3));transform();$('tooltip').hidden=true}else{
+  const rect=terrain.getBoundingClientRect(),x=e.clientX-rect.left,y=e.clientY-rect.top;
+  const face=[...terrainFaces].reverse().find(f=>{let inside=false;const p=f.vertices;for(let i=0,j=p.length-1;i<p.length;j=i++){if((p[i][1]>y)!==(p[j][1]>y)&&x<(p[j][0]-p[i][0])*(y-p[i][1])/(p[j][1]-p[i][1])+p[i][0])inside=!inside}return inside});
+  if(face)heatTip(e,face.day);else $('tooltip').hidden=true;
+}};
+$('heat3d').onpointerleave=()=>$('tooltip').hidden=true;
 $('heat3d').onpointerup=$('heat3d').onpointercancel=()=>{drag=null;transform()};
 $('heat3d').onwheel=e=>{e.preventDefault();scale=Math.max(.5,Math.min(1.7,scale-e.deltaY*.001));transform()};
 $('rotate').onclick=()=>{auto=!auto;$('rotate').textContent=auto?'停止旋转':'自动旋转';transform()};

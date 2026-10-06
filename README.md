@@ -16,7 +16,7 @@ Shared Brain 是给个人开发者准备的轻量本地记忆工具。完成 MCP
 - 配置简单并且使用外部mcp工具，避免因为agent版本更新而失效
 
 
-**当前源码版本：0.4.6。** 下载版本与更新说明以 [GitHub Releases](https://github.com/Denis-Tang/second-brain/releases/latest) 为准；源码中的新增功能不代表已有安装包已包含。
+**当前源码版本：0.4.7。** 下载版本与更新说明以 [GitHub Releases](https://github.com/Denis-Tang/second-brain/releases/latest) 为准；源码中的新增功能不代表已有安装包已包含。
 
 [预览](#preview--demo) · [快速开始](#quick-start) · [使用方式](#usage) · [工作原理](#how-it-works) · [项目边界](#项目边界与局限) · [开发与测试](#development) · [常见问题](#faq--troubleshooting)
 
@@ -258,7 +258,7 @@ API key 存在操作系统凭据库中，不回显；设置保存凭据引用。
 <details>
 <summary>Hook 事件协议与支持边界</summary>
 
-0.4.6 分发包提供 Codex、Claude Code、旧 Oh-DSH 和 DeepSeek Harness 的生命周期适配，并包含 [宿主接入](integrations/README.md) 说明。内置提示词指向这些现成脚本；Codex / Claude 命令 Hook 使用包内 `runtime/node.exe`。已发布的 v0.4.0 ZIP 只包含 DeepSeek Harness 适配。不要直接把 Harness 插件用于旧 Oh-DSH。
+0.4.7 分发包提供 Codex、Claude Code、旧 Oh-DSH 和 DeepSeek Harness 的生命周期适配，并包含 [宿主接入](integrations/README.md) 说明。内置提示词指向这些现成脚本；Codex / Claude 命令 Hook 使用包内 `runtime/node.exe`。已发布的 v0.4.0 ZIP 只包含 DeepSeek Harness 适配。不要直接把 Harness 插件用于旧 Oh-DSH。
 
 内置提示词给出真实程序位置的 `shared-brain --home PATH hook` 命令。它从 stdin 接收一个 JSON 事件并输出一个 JSON 对象；已有适配按随包说明接入，其他宿主才需要按其文档映射事件/返回格式。程序不擅自安装 Hook。
 
@@ -329,7 +329,7 @@ $env:SHARED_BRAIN_TEST_EXE = "D:\build-output\shared-brain\shared-brain.exe"
 python -m pytest -q
 ```
 
-2026-10-03，0.4.6 源码与新分发包验收为 **124 passed，无跳过**；已将 `SHARED_BRAIN_TEST_EXE` 指向新包，包含 5 项分发包 MCP/Hook 测试。原生桌面另验证 WebView2 加载、状态桥接、窗口显示与正常退出；ZIP 完整性检查通过。
+2026-10-06，0.4.7 源码与新分发包验收为 **125 passed，无跳过**；已将 `SHARED_BRAIN_TEST_EXE` 指向新包，包含 5 项分发包 MCP/Hook 测试。本版用 Canvas 修复每日积累 3D 柱体缺面与渲染卡顿，并修复任务栏直接启动窗口程序失败。真实 WebView2 验证 364 根柱体的四方向绘制、页面隐藏后停止动画，以及窗口程序无参数启动转回主入口；ZIP 完整性检查通过。
 
 测试主要使用隔离知识库、模拟模型和宿主协议；不证明真实维护质量、宿主 Hook 必然触发或数日运行稳定性。本仓库未配置独立的统一 lint 命令。
 

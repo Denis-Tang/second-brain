@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -19,6 +20,13 @@ internal static class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // Taskbar pins launch the window host without the parent's bridge arguments.
+        if (args.Length == 0)
+        {
+            var launcher = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "shared-brain.exe"));
+            Process.Start(new ProcessStartInfo(launcher) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(launcher)! });
+            return;
+        }
         Environment.SetEnvironmentVariable("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0");
         var assets = args[0];
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
