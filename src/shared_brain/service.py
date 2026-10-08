@@ -1,6 +1,7 @@
 """One application core shared by the desktop interface and MCP."""
 
 import json
+import os
 import sys
 import webbrowser
 from dataclasses import asdict
@@ -36,7 +37,8 @@ class BrainService:
         configured = values.pop("key_configured")
         values.pop("credential_account")
         result = {"version": __version__, "settings": values, "key_configured": configured, "ready": False, "global_prompt": "",
-                  "counts": {"tasks": 0, "sessions": 0, "memories": 0, "sources": 0}, "pending": 0, "last_maintenance": None}
+                  "counts": {"tasks": 0, "sessions": 0, "memories": 0, "sources": 0}, "pending": 0, "last_maintenance": None,
+                  "connections": []}
         if settings.vault_path and all((Path(settings.vault_path) / folder).is_dir()
                                        for folder in ("项目", "会话总结", "知识", "技能")):
             vault = self._vault()
@@ -49,6 +51,8 @@ class BrainService:
                                     "sources": counts.get("source", 0), "sessions": counts.get("session", 0)}
                 row = con.execute("SELECT value FROM state WHERE key='last_maintenance'").fetchone()
                 result["last_maintenance"] = json.loads(row[0]) if row else None
+                result["connections"] = [json.loads(row[0]) for row in con.execute(
+                    "SELECT value FROM state WHERE key LIKE 'connection:%' ORDER BY json_extract(value,'$.last_seen') DESC")]
         result["budget"] = usage_status(self.settings.home)
         return result
 
@@ -75,8 +79,69 @@ class BrainService:
     def projects(self) -> dict:
         return {"projects": self._vault().configured_projects()}
 
-    def configure_project(self, name: str, paths: list[str], project_id: str = "") -> dict:
-        return {"project": self._vault().configure_project(name, paths, project_id), "message": "项目配置已保存"}
+    def configure_project(self, name: str, paths: list[str], project_id: str = "", parent_project_id: str = "") -> dict:
+        return {"project": self._vault().configure_project(name, paths, project_id, parent_project_id), "message": "项目配置已保存"}
+
+    def project_changes(self, project_id: str) -> dict:
+        return self._vault().project_changes(project_id)
+
+    def create_commit(self, project_id: str, item_ids: list[str], message: str = "") -> dict:
+        return {"commit": self._vault().create_commit(project_id, item_ids, message), "message": "成果已提交"}
+
+    def project_commits(self, project_id: str) -> dict:
+        return {"commits": self._vault().project_commits(project_id)}
+
+    def project_commit(self, project_id: str, commit_id: str) -> dict:
+        return self._vault().project_commit(project_id, commit_id)
+
+    def merge_commit(self, project_id: str, commit_id: str, resolutions: dict | None = None) -> dict:
+        return self._vault().merge_commit(project_id, commit_id, resolutions)
+
+    def documents(self, project: str = "", query: str = "") -> dict:
+        vault = self._vault()
+        vault.refresh()
+        scope, params = ("", []) if project in {"", "all"} else (" AND project=?", ["" if project == "independent" else project])
+        if query.strip():
+            scope += " AND instr(lower(title || ' ' || body),lower(?))>0"
+            params.append(query.strip())
+        with vault.connect() as con:
+            rows = con.execute("SELECT path,title,kind,project,json_extract(metadata,'$.updated') AS updated FROM notes "
+                                "WHERE kind IN ('session','memory','skill','task','decision','source','object') "
+                                "AND coalesce(json_extract(metadata,'$.merged_into'),'')='' "
+                                "AND coalesce(json_extract(metadata,'$.feedback_pending'),0)!=1" + scope +
+                               " ORDER BY updated DESC,path LIMIT 200", params).fetchall()
+        return {"documents": [dict(row) for row in rows]}
+
+    def document(self, relative: str) -> dict:
+        vault = self._vault()
+        path = self._document_path(vault, relative)
+        relative = path.relative_to(vault.root).as_posix()
+        metadata, body = vault.read(path)
+        vault.refresh()
+        with vault.connect() as con:
+            sources = [dict(row) for row in con.execute(
+                "SELECT path,title,kind FROM notes WHERE path IN (SELECT value FROM json_each(?)) ORDER BY title",
+                (json.dumps(metadata.get("sources", [])),))]
+            backlinks = [dict(row) for row in con.execute(
+                "SELECT DISTINCT n.path,n.title,n.kind FROM notes n,json_each(n.metadata,'$.sources') s "
+                "WHERE s.value=? AND coalesce(json_extract(n.metadata,'$.merged_into'),'')='' "
+                "AND coalesce(json_extract(n.metadata,'$.feedback_pending'),0)!=1 ORDER BY n.title", (relative,))]
+        return {"path": relative, "title": metadata.get("title", path.stem), "kind": metadata.get("kind", "source"),
+                "body": body, "sources": sources, "backlinks": backlinks}
+
+    @staticmethod
+    def _document_path(vault, relative):
+        path = (vault.root / relative).resolve()
+        if not path.is_relative_to(vault.root) or path.suffix.lower() != ".md" or "草稿" in path.relative_to(vault.root).parts:
+            raise ValueError("请选择知识库中的正文文档")
+        return path
+
+    def open_document(self, relative: str) -> dict:
+        path = self._document_path(self._vault(), relative)
+        if not path.is_file():
+            raise ValueError("原文已不存在")
+        os.startfile(path)
+        return {"opened": True}
 
     def delete_project(self, project_id: str) -> dict:
         self._vault().delete_project(project_id)
@@ -207,6 +272,11 @@ class BrainService:
                   "guidance": "全局提示词全文遵循。所有会话保存完整总结；项目会话另存进度，独立会话不创建项目、任务或决策。安装卸载、工具配置、skills、模型和电脑环境变更由所有会话通过 changes 保存对象、实际位置、当前状态及验证；普通源码修改留在项目。真实失败用 errors；无事项不建记录。search 默认空 project 查全部，项目 ID 查本项目，independent 查公共池，all 查全部。草稿只存放，由用户手动提供，不搜索、不注入、不维护。子代理仅回传。"}
         if info:
             result["project_context"] = {k: info.get(k) for k in ("path", "title", "status", "goal", "next_actions")}
+            parent_id = info.get("parent_project_id", "")
+            if parent_id:
+                parent = vault.project(parent_id)
+                result["project_context"]["parent"] = {"project_id": parent_id, "title": parent["title"]}
+                result["guidance"] += " 子项目检索会实时继承主项目知识；保存仍归当前子项目。成果提交与合并由用户在桌面选择执行。"
             result["project_context"]["progress"] = info.get("progress", "")[:1600]
             result["project_context"]["notes"] = info["body"][:1600]
             if task_id:
@@ -229,6 +299,7 @@ class BrainService:
             result["global_prompt"] = prompt
         if task.strip():
             result["relevant"] = vault.search(task, project, 3, kinds=("memory", "skill", "object"))
+        vault.state("connection:" + fingerprint(agent.casefold())[:20], {"agent": agent, "last_seen": now()})
         return result
 
     def _session(self, vault, context):

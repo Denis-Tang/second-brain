@@ -14,6 +14,34 @@ let updateArchive = "";
 let updatePoll = 0;
 let updatePolling = false;
 
+function applyTheme() {
+  const preference = $("theme-preference").value;
+  const theme = preference === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : preference;
+  document.documentElement.dataset.theme = theme;
+  $("appearance-value").textContent = {system: "跟随系统", light: "浅色", dark: "深色"}[preference];
+  window.chrome.webview.postMessage("theme:" + theme);
+  if (overviewActivity) renderHeatmap(overviewActivity);
+}
+
+$("theme-preference").addEventListener("click", () => openMenu($("theme-preference"),
+  Object.entries({system: "跟随系统", light: "浅色", dark: "深色"}).map(([value, label]) => ({
+    label, selected: $("theme-preference").value === value,
+    action: () => { $("theme-preference").value = value; localStorage.setItem("appearance", value); applyTheme(); }
+  }))));
+
+function renderConnections(connections) {
+  const list = $("agent-connections");
+  list.replaceChildren();
+  for (const connection of connections) {
+    const row = document.createElement("div"); row.className = "connection-row";
+    const label = document.createElement("strong"); label.textContent = `${connection.agent} 已接入`;
+    const time = document.createElement("span"); time.className = "hint";
+    time.textContent = `最近加载 ${new Date(connection.last_seen).toLocaleString("zh-CN")}`;
+    row.append(label, time); list.append(row);
+  }
+  if (!connections.length) list.textContent = "尚无接入记录。接入后，在 Agent 中开启新会话即可看到记录。";
+}
+
 function toast(message, error = false) {
   $("toast").textContent = message;
   $("toast").className = error ? "error" : "";
@@ -32,13 +60,19 @@ async function action(button, work) {
   if (button) { button.disabled = true; button.dataset.busy = "true"; }
   try { await work(); }
   catch (error) { toast(error.message || String(error), true); }
-  finally { if (button) { button.disabled = false; delete button.dataset.busy; } }
+  finally {
+    if (button) {
+      button.disabled = false; delete button.dataset.busy;
+      if (button.matches("[data-copy-vault], [data-copy-agent], [data-copy-unbind]")) updatePromptAvailability();
+    }
+  }
 }
 
 async function refresh(fillForms = false) {
   const state = await call("status");
   const settings = state.settings;
   const budget = state.budget;
+  renderConnections(state.connections || []);
   $("budget-status").textContent = budget ? `本月已用/预留 ¥${budget.used_or_reserved_cny.toFixed(4)} / ¥${budget.monthly_limit_cny} · 剩余 ¥${budget.remaining_cny.toFixed(4)} · 今日 ${budget.today_calls}/3 批` : "";
   vaultReady = state.ready;
   vaultPath = settings.vault_path || "";
@@ -66,7 +100,7 @@ async function refresh(fillForms = false) {
 }
 
 function updatePromptAvailability() {
-  const ready = vaultReady && $("vault-path").value.trim() === vaultPath;
+  const ready = vaultReady && !!vaultPath.trim() && $("vault-path").value.trim() === vaultPath;
   document.querySelectorAll("[data-copy-vault], [data-copy-agent], [data-copy-unbind]").forEach((button) => {
     button.disabled = !ready || button.dataset.busy === "true";
   });
@@ -79,13 +113,17 @@ function activatePage(page) {
   activePage = page;
   $("new-project").hidden = page !== "projects";
   $("open-setup-guide").hidden = page !== "settings";
-  document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.page === page));
+  document.querySelectorAll(".nav-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.page === page);
+    item.setAttribute("aria-current", item.dataset.page === page ? "page" : "false");
+  });
   document.querySelectorAll(".page").forEach((item) => item.classList.toggle("active", item.id === page));
   $("page-title").textContent = page === "settings" && !vaultReady ? "首次设置" : pages[page];
 }
 
 let selectedMetric = "sessions";
 let overviewMetrics = [];
+let overviewActivity = null;
 
 function renderMetrics(metrics) {
   overviewMetrics = metrics;
@@ -124,7 +162,7 @@ function renderHistory(metric) {
   const coords = points.map((p,i) => [end === start ? 350 : 42 + (times[i]-start)/(end-start)*624, high === low ? 90 : 156-(p.value-low)/(high-low)*132]);
   const stamp = time => new Date(time).toLocaleString("zh-CN", {month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});
   $("axis-start").textContent = stamp(start);$("axis-end").textContent = stamp(end);
-  plot.innerHTML = `<svg viewBox="0 0 700 180" preserveAspectRatio="none" role="img" aria-label="历史变化"><defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#729ae5" stop-opacity=".23"/><stop offset="100%" stop-color="#729ae5" stop-opacity="0"/></linearGradient></defs>${[24,90,156].map(y=>`<line x1="42" x2="666" y1="${y}" y2="${y}" stroke="#edf1f7"/>`).join('')}<path d="M${coords[0][0]} 166 L${coords.map(p=>p.join(' ')).join(' L')} L${coords[coords.length-1][0]} 166 Z" fill="url(#fill)"/><polyline points="${coords.map(p=>p.join(',')).join(' ')}" fill="none" stroke="#497cdf" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><line id="cross" y1="12" y2="166" stroke="#a6bde6" stroke-dasharray="4" visibility="hidden"/><circle id="point" r="5" fill="#497cdf" stroke="white" stroke-width="2" visibility="hidden"/></svg><div id="chart-tip" class="chart-tip" hidden><span></span><strong></strong></div>`;
+  plot.innerHTML = `<svg viewBox="0 0 700 180" preserveAspectRatio="none" role="img" aria-label="历史变化"><defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--blue)" stop-opacity=".23"/><stop offset="100%" stop-color="var(--blue)" stop-opacity="0"/></linearGradient></defs>${[24,90,156].map(y=>`<line x1="42" x2="666" y1="${y}" y2="${y}" stroke="var(--line)"/>`).join('')}<path d="M${coords[0][0]} 166 L${coords.map(p=>p.join(' ')).join(' L')} L${coords[coords.length-1][0]} 166 Z" fill="url(#fill)"/><polyline points="${coords.map(p=>p.join(',')).join(' ')}" fill="none" stroke="var(--blue)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><line id="cross" y1="12" y2="166" stroke="var(--muted)" stroke-dasharray="4" visibility="hidden"/><circle id="point" r="5" fill="var(--blue)" stroke="var(--surface)" stroke-width="2" visibility="hidden"/></svg><div id="chart-tip" class="chart-tip" hidden><span></span><strong></strong></div>`;
   const cross=$("cross"),point=$("point"),tip=$("chart-tip");let selected=null;
   plot.onpointermove=e=>{
     const r=plot.getBoundingClientRect(),cursor=(e.clientX-r.left)/r.width*700;
@@ -149,8 +187,9 @@ function heatTip(e,item){
 }
 
 function renderHeatmap(activity){
+  overviewActivity = activity;
   $("heat-grid").replaceChildren();$("tooltip").hidden=true;
-  const colors=['#ebedf0','#a7f3d0','#6ee7b7','#34d399','#10b981'];
+  const colors=Array.from({length:5},(_,i)=>getComputedStyle(document.documentElement).getPropertyValue('--heat-'+i).trim());
   const values=new Map(activity.days.map(d=>[d.day,d.tokens]));
   const localDay=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   const today=new Date(),start=new Date(today.getFullYear(),today.getMonth(),today.getDate()-today.getDay()-51*7,12),end=localDay(today);
@@ -161,6 +200,15 @@ function renderHeatmap(activity){
     const half=Math.floor(i/182),week=Math.floor(i%182/7),section=halves[half],level=d.value?Math.max(1,Math.ceil(d.value/max*4)):0;
     if(i%182===0||(d.date.slice(8)==='01'&&week<24)){const month=document.createElement('span');month.textContent=Number(d.date.slice(5,7))+'月';month.style.gridColumn=week+1;section.firstElementChild.append(month)}
     const cell=document.createElement('button');cell.className='heat-cell';cell.style.background=colors[level];cell.classList.toggle('unrecorded',d.value===null);
+    cell.tabIndex=d.date===end?0:-1;
+    cell.onfocus=()=>{const r=cell.getBoundingClientRect();heatTip({clientX:r.left,clientY:r.top},d)};
+    cell.onblur=()=>$("tooltip").hidden=true;
+    cell.onkeydown=e=>{
+      const step={ArrowLeft:-7,ArrowRight:7,ArrowUp:-1,ArrowDown:1}[e.key];
+      if(step===undefined)return;e.preventDefault();
+      const cells=$("heat-grid").querySelectorAll('.heat-cell'),next=Math.max(0,Math.min(days.length-1,i+step));
+      cell.tabIndex=-1;cells[next].tabIndex=0;cells[next].focus();
+    };
     cell.setAttribute('aria-label',`${d.date} ${d.value===null?'未记录':d.value+' token'}`);cell.onpointermove=e=>heatTip(e,d);cell.onpointerleave=()=>$("tooltip").hidden=true;section.lastElementChild.append(cell);
 
   });
@@ -172,7 +220,10 @@ function renderHeatmap(activity){
 
 async function refreshOverview() {
   const result = await call("overview", overviewPeriod);
-  if (result.period === overviewPeriod) { renderMetrics(result.metrics); renderHeatmap(result.activity); }
+  if (result.period === overviewPeriod) {
+    if (!$("growth-cards").contains(document.activeElement)) renderMetrics(result.metrics);
+    if (!$("heat-grid").contains(document.activeElement)) renderHeatmap(result.activity);
+  }
 }
 
 document.querySelectorAll("[data-page]").forEach((button) => {
@@ -387,6 +438,11 @@ $("update-page").addEventListener("click", (event) => action(event.currentTarget
 }));
 
 window.addEventListener("desktopready", () => {
+  $("theme-preference").value = localStorage.getItem("appearance") || "system";
+  applyTheme();
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if ($("theme-preference").value === "system") applyTheme();
+  });
   action(null, () => refresh(true));
   setInterval(() => action(null, () => refresh()), 30000);
 });
@@ -400,9 +456,24 @@ $("global-prompt-form").addEventListener("submit", (event) => {
   });
 });
 
-let editingProject = "";
-let projectPaths = [];
+let editingProject = "", editingParent = "", projectPaths = [];
+let projectList = [], projectSignature = "", activeRoot = "";
+let projectViews = {}, projectViewVault = null;
+const board = $("project-list"), treeBoard = $("tree-board"), treeDialog = $("tree-dialog");
+const menu = $("app-menu");
+let menuTrigger = null, swallowedClick = false;
+const treeObserver = new ResizeObserver(drawConnections);
+const folder = '<span class="folder-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5h6l3 3h9v12H3Z"/></svg></span>';
 
+function persistProjectViews() { localStorage.setItem("project-views:" + vaultPath, JSON.stringify(projectViews)); }
+function hasChildren(id) { return projectList.some(project => project.parent_project_id === id); }
+function viewState(root = activeRoot) { return projectViews[root || "roots"] ||= {}; }
+function expanded(id, root = activeRoot) { return viewState(root)[id] ?? (!root && !hasChildren(id)); }
+// The API already orders projects by creation time, newest first.
+function visibleProjects(root = activeRoot) {
+  return root ? [projectList.find(p => p.project_id === root), ...projectList.filter(p => p.parent_project_id === root)]
+    : projectList.filter(p => !p.parent_project_id);
+}
 function projectButton(label, work) {
   const button = document.createElement("button");
   button.type = "button";
@@ -424,7 +495,7 @@ function renderProjectPaths() {
     row.className = "project-path-row";
     const label = document.createElement("span");
     label.textContent = path;
-    row.append(label, projectButton("复制路径", () => copyProjectText(path)), projectButton("移除", () => {
+    row.append(label, projectButton("移除", () => {
       projectPaths.splice(index, 1);
       renderProjectPaths();
     }));
@@ -432,90 +503,256 @@ function renderProjectPaths() {
   });
 }
 
-function editProject(project) {
+function editProject(project, parent = null) {
   editingProject = project?.project_id || "";
+  editingParent = project?.parent_project_id || parent?.project_id || "";
   projectPaths = [...(project?.paths || [])];
   $("project-name").value = project?.name || "";
-  $("project-form-title").textContent = project ? "编辑项目" : "新增项目";
+  $("project-form-title").textContent = project ? "编辑项目" : (parent ? "新建子项目" : "新增项目");
+  $("project-parent-label").hidden = !editingParent;
+  $("project-parent-label").textContent = editingParent ? `主项目：${projectList.find(p=>p.project_id===editingParent).name}` : "";
   $("save-project").textContent = project ? "保存修改" : "创建项目";
   renderProjectPaths();
 }
 
-async function refreshProjects() {
-  const result = vaultReady ? await call("projects") : { projects: [] };
-  $("project-count").textContent = `全部项目（${result.projects.length}）`;
-  $("new-project").disabled = !vaultReady;
-  $("project-list").replaceChildren();
-  if (!result.projects.length) {
-    const empty = document.createElement("p");
-    empty.className = "empty-state";
-    empty.textContent = vaultReady ? "暂无项目" : "请先在设置中保存知识库路径。";
-    $("project-list").append(empty);
-  }
-  for (const project of result.projects) {
-    const card = document.createElement("article");
-    card.className = "card project-card";
-    const heading = document.createElement("div");
-    heading.className = "project-heading";
-    const title = document.createElement("h2");
-    title.textContent = project.name;
-    const actions = document.createElement("div");
-    actions.className = "project-actions";
-    const menu = document.createElement("details");
-    menu.className = "project-menu";
-    const summary = document.createElement("summary");
-    summary.textContent = "···";
-    summary.ariaLabel = "更多操作";
-    const menuItems = document.createElement("div");
-    menuItems.className = "project-menu-items";
-    menuItems.append(projectButton("复制名称", () => {
-      menu.open = false;
-      summary.focus();
-      return copyProjectText(project.name);
-    }), projectButton("删除项目", () => {
-      menu.open = false;
-      summary.focus();
-      $("delete-project-dialog").dataset.projectId = project.project_id;
-      $("delete-project-question").textContent = `确定删除“${project.name}”的立项信息吗？`;
-      $("delete-project-dialog").showModal();
-    }));
-    menuItems.lastChild.className = "button destructive";
-    menu.append(summary, menuItems);
-    actions.append(projectButton("编辑", () => {
-      editProject(project);
-      $("project-editor").showModal();
-    }), menu);
-    heading.append(title, actions);
-    const paths = document.createElement("div");
-    paths.className = "project-field";
-    const pathsLabel = document.createElement("h3");
-    pathsLabel.textContent = "工作目录";
-    paths.append(pathsLabel);
-    if (!project.paths.length) {
-      const note = document.createElement("p");
-      note.className = "hint";
-      note.textContent = "未关联";
-      paths.append(note);
-    }
-    for (const path of project.paths) {
-      const row = document.createElement("div");
-      row.className = "project-path-row";
-      const label = document.createElement("span");
-      label.textContent = path;
-      row.append(label, projectButton("复制路径", () => copyProjectText(path)));
-      paths.append(row);
-    }
-    const directory = document.createElement("div");
-    directory.className = "project-field project-directory";
-    const directoryLabel = document.createElement("h3");
-    directoryLabel.textContent = "项目资料";
-    const directoryPath = document.createElement("p");
-    directoryPath.textContent = project.directory;
-    directory.append(directoryLabel, directoryPath);
-    card.append(heading, paths, directory);
-    $("project-list").append(card);
-  }
+function newChild(project) {
+  editProject(null, project);
+  $("project-editor").showModal();
 }
+
+function closeMenu(restoreFocus = false) {
+  const trigger = menuTrigger;
+  if (menu.matches(':popover-open')) menu.hidePopover();
+  menu.hidden = true; menuTrigger = null;
+  if (trigger) trigger.setAttribute('aria-expanded', 'false');
+  if (restoreFocus && trigger) trigger.focus({ preventScroll: true });
+}
+function openMenu(trigger, entries, position = null) {
+  if (!position && menuTrigger === trigger) { closeMenu(true); return; }
+  closeMenu(); (trigger.closest('dialog') || document.body).append(menu); menu.replaceChildren(); menuTrigger = trigger;
+  trigger.setAttribute('aria-expanded', 'true');
+  for (const entry of entries) {
+    const item = projectButton(entry.label, () => { closeMenu(true); return entry.action(); });
+    item.setAttribute('role', entry.selected === undefined ? 'menuitem' : 'menuitemradio');
+    if (entry.selected !== undefined) {
+      item.setAttribute('aria-checked', entry.selected);
+      const check = document.createElement('span'); check.className = 'check'; check.textContent = entry.selected ? '✓' : ''; item.append(check);
+    }
+    if (entry.danger) item.classList.add('destructive');
+    menu.append(item);
+  }
+  menu.hidden = false; menu.style.maxHeight = `${innerHeight - 16}px`; menu.showPopover();
+  const rect = position ? {right: position.x + menu.offsetWidth, top: position.y, bottom: position.y - 7} : trigger.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(rect.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8))}px`;
+  menu.style.top = `${Math.max(8, rect.bottom + 7 + menu.offsetHeight > innerHeight - 8 ? rect.top - menu.offsetHeight - 7 : rect.bottom + 7)}px`;
+  (menu.querySelector('[aria-checked=true]') || menu.firstElementChild).focus({ preventScroll: true });
+}
+document.addEventListener('pointerdown', event => {
+  swallowedClick = false;
+  if (!menu.hidden && !menu.contains(event.target) && event.target.closest('button') !== menuTrigger) {
+    closeMenu(true); swallowedClick = true; event.preventDefault(); event.stopImmediatePropagation();
+  }
+}, true);
+document.addEventListener('click', event => {
+  if (swallowedClick) { swallowedClick = false; event.preventDefault(); event.stopImmediatePropagation(); return; }
+  if (!menu.hidden && !menu.contains(event.target) && event.target.closest('button') !== menuTrigger) {
+    closeMenu(true); event.preventDefault(); event.stopImmediatePropagation();
+  }
+}, true);
+document.addEventListener('keydown', event => {
+  if (menu.hidden) return;
+  const items = [...menu.querySelectorAll('button:not(:disabled)')]; const index = items.indexOf(document.activeElement);
+  if (event.key === 'Escape') { event.preventDefault(); closeMenu(true); }
+  if (event.key === 'Tab') closeMenu(true);
+  if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+    event.preventDefault();
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+    items[next].focus();
+  }
+});
+window.addEventListener('resize', () => closeMenu());
+
+
+function refreshGlobalState(root = activeRoot) {
+  const visible = visibleProjects(root);
+  const count = visible.filter(p => expanded(p.project_id, root)).length;
+  $(root ? 'tree-compact' : 'all-compact').setAttribute('aria-pressed', count === 0);
+  $(root ? 'tree-detail' : 'all-detail').setAttribute('aria-pressed', count === visible.length);
+}
+function pressFeedback(card) {
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) card.animate([{ background: 'var(--glass)' }, { background: 'var(--selected)' }, { background: 'var(--glass)' }], { duration: 220, easing: 'cubic-bezier(.22,1,.36,1)' });
+}
+function applyCardState(card, open, root = activeRoot) {
+  card.classList.toggle('is-compact', !open);
+  if (root || !hasChildren(card.dataset.projectId)) card.querySelector('.project-title').setAttribute('aria-expanded', open);
+  const details = card.querySelector('.card-details');
+  details.inert = !open; details.setAttribute('aria-hidden', !open);
+}
+function toggleCard(project, card, root) {
+  if (!root && hasChildren(project.project_id)) {
+    pressFeedback(card); activeRoot = project.project_id; renderTree(); treeDialog.showModal();
+    requestAnimationFrame(drawConnections);
+    return;
+  }
+  viewState(root)[project.project_id] = !expanded(project.project_id, root);
+  pressFeedback(card); applyCardState(card, expanded(project.project_id, root), root); refreshGlobalState(root); persistProjectViews();
+}
+async function refreshProjects(force = false) {
+  const result = vaultReady ? await call("projects") : {projects: []};
+  $("new-project").disabled = !vaultReady;
+  const switchedVault = projectViewVault !== vaultPath;
+  if (switchedVault) {
+    if (treeDialog.open) treeDialog.close();
+    activeRoot = ""; projectViewVault = vaultPath;
+    projectViews = JSON.parse(localStorage.getItem("project-views:" + vaultPath) || "{}");
+  }
+  const signature = JSON.stringify(result.projects);
+  if (!force && !switchedVault && (signature === projectSignature || board.contains(document.activeElement)
+      || treeBoard.contains(document.activeElement) || !menu.hidden)) return;
+  projectList = result.projects; projectSignature = signature;
+  renderProjects();
+}
+
+function projectCard(project, root) {
+  const card = document.createElement('article'); card.className = 'card project-card'; card.dataset.projectId = project.project_id;
+  card.tabIndex = -1;
+  const heading = document.createElement('div'); heading.className = 'project-heading';
+  const h2 = document.createElement('h2');
+  const title = projectButton('', () => toggleCard(project, card, root)); title.className = 'project-title'; title.innerHTML = folder;
+  const label = document.createElement('span'); label.className = 'name-label';
+  const name = document.createElement('span'); name.className = 'name-text'; name.textContent = project.name; label.append(name);
+  if (hasChildren(project.project_id)) {
+    const dot = document.createElement('span'); dot.className = 'child-dot'; dot.setAttribute('aria-hidden', 'true'); label.append(dot);
+    title.setAttribute('aria-label', `${project.name}，包含子项目`);
+  }
+  const detailsId = `details-${root || 'roots'}-${project.project_id}`;
+  title.append(label); title.setAttribute('aria-controls', !root && hasChildren(project.project_id) ? 'tree-dialog' : detailsId);
+  if (!root && hasChildren(project.project_id)) title.setAttribute('aria-haspopup', 'dialog');
+  h2.append(title);
+  const actions = document.createElement('div'); actions.className = 'project-actions';
+  const editButton = projectButton('编辑', () => { editProject(project); $('project-editor').showModal(); }); editButton.setAttribute('aria-label', `编辑 ${project.name}`);
+  const entries = [
+    ...(!project.parent_project_id ? [{label: '新建子项目', action: () => newChild(project)}] : []),
+    {label: '复制名称', action: () => copyProjectText(project.name)},
+    {label: '删除项目', danger: true, action: () => {
+      $('delete-project-dialog').dataset.projectId = project.project_id;
+      $('delete-project-question').textContent = `确定删除“${project.name}”的立项信息吗？`;
+      $('delete-project-dialog').showModal();
+    }}
+  ];
+  const more = projectButton('···', () => openMenu(more, entries)); more.classList.add('menu-trigger');
+  more.setAttribute('aria-label', `${project.name} 更多操作`); more.setAttribute('aria-haspopup', 'menu'); more.setAttribute('aria-expanded', 'false');
+  card.addEventListener('contextmenu', event => {
+    if (event.target.closest('button,a,input,textarea')) return;
+    event.preventDefault(); openMenu(card, entries, {x: event.clientX, y: event.clientY});
+  });
+  actions.append(editButton, more); heading.append(h2, actions);
+  const details = document.createElement('div'); details.className = 'card-details'; details.id = detailsId;
+  const inner = document.createElement('div'); inner.className = 'details-inner';
+  const paths = document.createElement('div'); paths.className = 'project-field';
+  const pathsLabel = document.createElement('h3'); pathsLabel.textContent = '工作目录'; paths.append(pathsLabel);
+  for (const path of project.paths) {
+    const row = document.createElement('div'); row.className = 'project-path-row';
+    const text = document.createElement('span'); text.textContent = path;
+    row.append(text, projectButton('复制路径', () => copyProjectText(path))); paths.append(row);
+  }
+  if (!project.paths.length) { const empty = document.createElement('p'); empty.className = 'hint'; empty.textContent = '未关联'; paths.append(empty); }
+  const footer = document.createElement('div'); footer.className = 'project-card-footer';
+  footer.append(projectButton('资料目录', () => {
+    $('directory-title').textContent = `${project.name} · 资料目录`;
+    $('directory-path').textContent = project.directory; $('directory-dialog').showModal();
+  }), projectButton('资料与会话', () => showDocuments(project)));
+  if (project.parent_project_id) footer.append(projectButton('提交与合并', () => showProjectResults(project)));
+  inner.append(paths, footer); details.append(inner); card.append(heading, details);
+  card.addEventListener('click', event => {
+    if (event.target.closest('button,a,input,textarea') || getSelection().toString()) return;
+    toggleCard(project, card, root);
+  });
+  applyCardState(card, expanded(project.project_id, root), root); return card;
+}
+function renderProjects() {
+  closeMenu(); board.replaceChildren();
+  const roots = visibleProjects('');
+  roots.forEach(project => board.append(projectCard(project, '')));
+  $('project-count').textContent = `全部项目（${roots.length}）`;
+  if (!roots.length) board.append(textElement('p', vaultReady ? '暂无项目' : '请先在设置中保存知识库路径。', 'empty-state'));
+  refreshGlobalState('');
+  if (activeRoot) renderTree();
+}
+function renderTree() {
+  treeObserver.disconnect(); treeBoard.replaceChildren();
+  const visible = visibleProjects();
+  if (!visible[0]) { treeDialog.close(); return; }
+  const tree = document.createElement('div'); tree.className = 'tree-frame'; tree.classList.toggle('is-leaf', visible.length === 1);
+  const edges = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); edges.classList.add('tree-lines'); edges.setAttribute('aria-hidden', 'true');
+  edges.append(document.createElementNS('http://www.w3.org/2000/svg', 'path'));
+  const children = document.createElement('div'); children.className = 'tree-children';
+  visible.slice(1).forEach(project => children.append(projectCard(project, activeRoot)));
+  tree.append(edges, projectCard(visible[0], activeRoot), children); treeBoard.append(tree);
+  treeObserver.observe(tree); tree.querySelectorAll('.project-card').forEach(card => treeObserver.observe(card));
+  requestAnimationFrame(drawConnections);
+  $('tree-title').textContent = visible[0].name;
+  refreshGlobalState();
+}
+function drawConnections() {
+  const tree = treeBoard.querySelector('.tree-frame'); if (!tree || !treeDialog.open) return;
+  const bounds = tree.getBoundingClientRect();
+  const root = tree.querySelector(':scope > .project-card').getBoundingClientRect();
+  const children = [...tree.querySelectorAll('.tree-children > .project-card')].map(card => card.getBoundingClientRect());
+  if (!children.length) return;
+  const x = root.right - bounds.left; const y = (root.top + root.bottom) / 2 - bounds.top;
+  const middle = (root.right + children[0].left) / 2 - bounds.left;
+  const points = children.map(rect => ({ x: rect.left - bounds.left, y: (rect.top + rect.bottom) / 2 - bounds.top }));
+  const svg = tree.querySelector('svg.tree-lines');
+  svg.setAttribute('viewBox', `0 0 ${bounds.width} ${bounds.height}`);
+  svg.querySelector('path').setAttribute('d', `M ${x} ${y} H ${middle} M ${middle} ${Math.min(y, points[0].y)} V ${Math.max(y, points.at(-1).y)} ${points.map(point => `M ${middle} ${point.y} H ${point.x}`).join(' ')}`);
+}
+$('close-tree').addEventListener('click', () => treeDialog.close());
+treeDialog.addEventListener('close', () => {
+  const previous = activeRoot; closeMenu(); activeRoot = ''; treeObserver.disconnect(); treeBoard.replaceChildren();
+  board.querySelector(`[data-project-id="${previous}"] .project-title`)?.focus({ preventScroll: true });
+});
+for (const [id, open, inTree] of [['all-compact', false, false], ['all-detail', true, false], ['tree-compact', false, true], ['tree-detail', true, true]]) {
+  $(id).addEventListener('click', () => {
+    const root = inTree ? activeRoot : '';
+    visibleProjects(root).forEach(p => { viewState(root)[p.project_id] = open; });
+    (inTree ? treeBoard : board).querySelectorAll('.project-card').forEach(card => applyCardState(card, open, root)); refreshGlobalState(root); persistProjectViews();
+  });
+}
+$('new-child').addEventListener('click', () => newChild(projectList.find(p => p.project_id === activeRoot)));
+
+const scrollAreas = 'main,aside,dialog,textarea,.heat-scroll,.app-menu,.tree-board,.result-list,.document-list,.document-body,.release-notes';
+const scrollTimers = new WeakMap();
+let hoveredScroller = null;
+let draggedScroller = null;
+function showScrollbar(area) {
+  clearTimeout(scrollTimers.get(area)); area.classList.add('scroll-active');
+  if (area !== hoveredScroller && area !== draggedScroller) scrollTimers.set(area, setTimeout(() => area.classList.remove('scroll-active'), 2000));
+}
+document.addEventListener('scroll', event => {
+  if (event.target.matches?.(scrollAreas)) {
+    showScrollbar(event.target);
+    if (!menu.contains(event.target)) closeMenu();
+  }
+}, true);
+document.addEventListener('pointermove', event => {
+  const area = event.target.closest(scrollAreas);
+  let next = null;
+  if (area) {
+    const rect = area.getBoundingClientRect();
+    const vertical = area.scrollHeight > area.clientHeight && event.clientX >= rect.right - 12;
+    const horizontal = area.scrollWidth > area.clientWidth && event.clientY >= rect.bottom - 12;
+    if (vertical || horizontal) next = area;
+  }
+  if (next !== hoveredScroller) {
+    const previous = hoveredScroller; hoveredScroller = next;
+    if (previous) showScrollbar(previous);
+    if (next) showScrollbar(next);
+  }
+});
+document.addEventListener('pointerdown', () => { if (hoveredScroller) { draggedScroller = hoveredScroller; showScrollbar(draggedScroller); } });
+document.addEventListener('pointerup', () => { const previous = draggedScroller; draggedScroller = null; if (previous) showScrollbar(previous); });
+window.addEventListener('pointerout', event => { if (event.relatedTarget) return; const previous = hoveredScroller; hoveredScroller = null; if (previous) showScrollbar(previous); });
 
 $("add-project-path").addEventListener("click", (event) => action(event.currentTarget, async () => {
   const result = await call("choose_vault");
@@ -532,18 +769,124 @@ $("cancel-delete-project").addEventListener("click", () => $("delete-project-dia
 $("confirm-delete-project").addEventListener("click", (event) => action(event.currentTarget, async () => {
   const result = await call("delete_project", $("delete-project-dialog").dataset.projectId);
   $("delete-project-dialog").close();
-  await refreshProjects();
+  await refreshProjects(true);
   toast(result.message);
 }));
 $("project-form").addEventListener("submit", (event) => {
   event.preventDefault();
   action(event.submitter, async () => {
-    const result = await call("configure_project", $("project-name").value.trim(), projectPaths, editingProject);
+    const result = await call("configure_project", $("project-name").value.trim(), projectPaths, editingProject, editingParent);
     $("project-editor").close();
-    await refreshProjects();
+    if (!editingProject && editingParent && !hasChildren(editingParent)) {
+      viewState("")[editingParent] = false; persistProjectViews();
+    }
+    await refreshProjects(true);
     toast(result.message);
   });
 });
+
+const kindLabels = {memory:"知识",skill:"技能",session:"会话总结",source:"资料",task:"任务",decision:"决策",progress:"项目进度",object:"环境记录"};
+function textElement(tag, text, className = "") {
+  const element = document.createElement(tag); element.textContent = text; element.className = className; return element;
+}
+document.querySelectorAll("[data-close]").forEach(button => button.onclick = () => $(button.dataset.close).close());
+let resultsProject = null, mergingCommit = null;
+async function showProjectResults(project) {
+  resultsProject = project;
+  const [changes, history] = await Promise.all([call("project_changes",project.project_id),call("project_commits",project.project_id)]);
+  $("project-results-title").textContent = project.name + " · 提交与合并";
+  $("project-results-parent").textContent = `合入主项目：${projectList.find(p=>p.project_id===project.parent_project_id).name}。选择本次成果，保留提交时的内容。`;
+  $("commit-items").replaceChildren(); $("commit-message").value = "";
+  for (const item of changes.items) {
+    const row = document.createElement("div"); row.className = "result-item";
+    const label = document.createElement("label"); label.className = "checkbox-row";
+    const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.value = item.id;
+    label.append(checkbox,textElement("span",`${kindLabels[item.kind] || item.kind} · ${item.title}`));
+    const preview = document.createElement("details"); preview.append(textElement("summary","查看内容"),textElement("pre",item.text,"document-body"));
+    row.append(label,preview); $("commit-items").append(row);
+  }
+  if (!changes.items.length) $("commit-items").append(textElement("p","暂无可提交成果。先让 Agent 保存项目进展。","empty-state"));
+  $("commit-history").replaceChildren();
+  for (const commit of history.commits) {
+    const row = document.createElement("div"); row.className = "result-item commit-row";
+    row.append(textElement("span",commit.title),textElement("span",commit.status === "merged" ? "已合并" : "待合并","hint"));
+    const button = projectButton(commit.status === "merged" ? "查看提交" : "查看并合并",()=>showMerge(commit.id));
+    row.append(button); $("commit-history").append(row);
+  }
+  if (!history.commits.length) $("commit-history").append(textElement("p","暂无提交记录","hint"));
+  if (!$("project-results").open) $("project-results").showModal();
+}
+$("commit-form").addEventListener("submit", event => {
+  event.preventDefault(); action(event.submitter,async()=>{
+    const selected = [...$("commit-items").querySelectorAll("input:checked")].map(input=>input.value);
+    const result = await call("create_commit",resultsProject.project_id,selected,$("commit-message").value.trim());
+    await showProjectResults(resultsProject); toast(result.message);
+  });
+});
+async function showMerge(commitId) {
+  mergingCommit = await call("project_commit",resultsProject.project_id,commitId);
+  $("merge-title").textContent = mergingCommit.title;
+  $("merge-description").textContent = mergingCommit.status === "merged" ? "已合并。以下为提交时保存的成果。" : "合入选定成果，原工作区和会话总结保持原位。";
+  $("merge-items").replaceChildren(); $("merge-conflicts").replaceChildren();
+  for (const item of mergingCommit.items) {
+    const row = document.createElement("details"); row.className = "result-item";
+    row.append(textElement("summary",`${kindLabels[item.kind] || item.kind} · ${item.title}`),textElement("pre",item.text,"document-body"));
+    $("merge-items").append(row);
+  }
+  for (const conflict of mergingCommit.conflicts || []) {
+    const row = document.createElement("div"); row.className = "result-item";
+    row.append(textElement("h3",conflict.title),textElement("p","主项目已有不同内容，请选择保留哪份。","hint"));
+    const comparison = document.createElement("details"); comparison.append(textElement("summary","查看两份内容"),textElement("h4","主项目"),textElement("pre",conflict.parent_text,"document-body"),textElement("h4","本次提交"),textElement("pre",conflict.submitted_text,"document-body"));
+    const select = document.createElement("select"); select.dataset.itemId = conflict.id; select.required = true; select.setAttribute("aria-label",conflict.title+"的合并选择");
+    for (const [value,label] of [["","选择保留内容"],["keep_parent","保留主项目"],["use_commit","采用本次提交"]]) { const option = textElement("option",label); option.value=value; select.append(option); }
+    row.append(comparison,select); $("merge-conflicts").append(row);
+  }
+  $("merge-submit").hidden = mergingCommit.status === "merged";
+  if (!$("merge-dialog").open) $("merge-dialog").showModal();
+}
+$("merge-form").addEventListener("submit", event => {
+  event.preventDefault(); action(event.submitter,async()=>{
+    const resolutions = Object.fromEntries([...$("merge-conflicts").querySelectorAll("select")].map(select=>[select.dataset.itemId,select.value]));
+    const result = await call("merge_commit",resultsProject.project_id,mergingCommit.id,resolutions);
+    if (!result.merged) { await showMerge(mergingCommit.id); toast("主项目内容已变化，请选择合并方式"); return; }
+    $("merge-dialog").close(); await showProjectResults(resultsProject); toast("成果已合入主项目");
+  });
+});
+
+let documentsProject = "", currentDocument = "";
+async function showDocuments(project = null) {
+  documentsProject = project?.project_id || "";
+  $("documents-scope").textContent = project ? project.name : "全部项目与独立会话";
+  $("document-query").value = ""; await loadDocuments(); $("documents-dialog").showModal();
+}
+async function loadDocuments() {
+  const result = await call("documents",documentsProject,$("document-query").value);
+  $("document-list").replaceChildren();
+  for (const note of result.documents) {
+    const button = projectButton(`${kindLabels[note.kind] || note.kind} · ${note.title}`,()=>showDocument(note.path));
+    button.className = "document-link"; $("document-list").append(button);
+  }
+  if (!result.documents.length) $("document-list").append(textElement("p","没有找到相关资料","empty-state"));
+  if (result.documents.length === 200) $("document-list").append(textElement("p","显示最近 200 条，可输入关键词查找更早的资料。","hint"));
+}
+async function showDocument(path) {
+  const note = await call("document",path); currentDocument = path;
+  $("document-title").textContent = note.title; $("document-body").textContent = note.body;
+  $("document-links").replaceChildren();
+  for (const [label,notes] of [["来源",note.sources],["引用这篇文档",note.backlinks]]) {
+    const section = document.createElement("section"); section.append(textElement("h3",label));
+    for (const linked of notes) {
+      const button = projectButton(linked.title,()=>showDocument(linked.path));
+      button.append(textElement("small",linked.path,"hint")); section.append(button);
+    }
+    if (!notes.length) section.append(textElement("p","暂无关联","hint"));
+    $("document-links").append(section);
+  }
+  if (!$("document-dialog").open) $("document-dialog").showModal();
+}
+$("browse-documents").onclick = () => action(null,()=>showDocuments());
+$("document-search").addEventListener("submit",event=>{event.preventDefault();action(event.submitter,loadDocuments)});
+$("open-document").onclick = event => action(event.currentTarget,()=>call("open_document",currentDocument));
 
 let terrainDays=[],terrainFaces=[],terrainVisible=false;
 const terrain=$('terrain'),terrainContext=terrain.getContext('2d');

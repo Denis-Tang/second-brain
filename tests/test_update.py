@@ -15,6 +15,9 @@ from shared_brain import __version__, desktop, update
 from shared_brain.onboarding import build_update_prompt
 from shared_brain.service import BrainService
 
+major, minor, patch = __version__.split(".")
+NEWER_VERSION = f"{major}.{minor}.{int(patch) + 1}"
+
 PACKAGE_FILES = [
     "shared-brain/shared-brain.exe",
     "shared-brain/desktop/SharedBrain.Desktop.exe",
@@ -104,17 +107,17 @@ def test_newer_release_is_reported_and_cached(tmp_path):
 
     def fetcher(timeout):
         calls.append(timeout)
-        return release("0.4.8")
+        return release(NEWER_VERSION)
 
     result = update.check_latest(tmp_path, force=True, fetcher=fetcher)
     assert result["newer"] and result["available"] and not result["stale"]
-    assert result["latest"] == "0.4.8" and result["current"] == __version__
+    assert result["latest"] == NEWER_VERSION and result["current"] == __version__
     assert result["message"].startswith("发现新版本")
     assert result["asset"]["sha256"] == "a" * 64
     assert calls == [8.0]
 
     cached = json.loads((tmp_path / update.CACHE_NAME).read_text(encoding="utf-8"))
-    assert cached["release"]["version"] == "0.4.8"
+    assert cached["release"]["version"] == NEWER_VERSION
     # A second click reuses the cached answer instead of spending another API call.
     again = update.check_latest(tmp_path, force=True, fetcher=failing("不该被调用"))
     assert again["newer"] and again["cached"] and not calls[1:]
@@ -122,14 +125,14 @@ def test_newer_release_is_reported_and_cached(tmp_path):
 
 def test_expired_cache_without_force_reuses_the_stored_answer(tmp_path):
     moment = datetime.now(timezone.utc)
-    update._write_cache(tmp_path, release("0.4.8"), moment - timedelta(hours=2))
+    update._write_cache(tmp_path, release(NEWER_VERSION), moment - timedelta(hours=2))
     result = update.check_latest(tmp_path, fetcher=failing("不该被调用"))
     assert result["newer"] and result["cached"] and result["available"]
 
 
 def test_unavailable_github_falls_back_to_a_stale_cache(tmp_path):
     moment = datetime.now(timezone.utc)
-    update._write_cache(tmp_path, release("0.4.8"), moment - timedelta(days=2))
+    update._write_cache(tmp_path, release(NEWER_VERSION), moment - timedelta(days=2))
     result = update.check_latest(tmp_path, force=True, fetcher=failing())
     assert result["stale"] and result["available"] and result["newer"]
     assert "查询次数已用完" in result["message"]
@@ -144,7 +147,7 @@ def test_unavailable_github_without_cache_reports_a_short_message(tmp_path):
 
 def test_corrupt_cache_is_ignored(tmp_path):
     (tmp_path / update.CACHE_NAME).write_text("{ not json", encoding="utf-8")
-    result = update.check_latest(tmp_path, force=True, fetcher=lambda timeout: release("0.4.8"))
+    result = update.check_latest(tmp_path, force=True, fetcher=lambda timeout: release(NEWER_VERSION))
     assert result["available"] and result["newer"]
 
 

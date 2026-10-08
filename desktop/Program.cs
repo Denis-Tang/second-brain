@@ -27,7 +27,6 @@ internal static class Program
             Process.Start(new ProcessStartInfo(launcher) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(launcher)! });
             return;
         }
-        Environment.SetEnvironmentVariable("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0");
         var assets = args[0];
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         var window = new Window
@@ -35,17 +34,18 @@ internal static class Program
             Title = "Shared Brain", Width = 1160, Height = 860,
             MinWidth = 680, MinHeight = 500, WindowStartupLocation = WindowStartupLocation.CenterScreen,
             WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.CanResize, ShowActivated = false,
-            Background = Brushes.Transparent,
+            Background = new SolidColorBrush(Color.FromRgb(241, 246, 253)),
             Icon = BitmapDecoder.Create(new Uri(Path.Combine(assets, "icon.ico")), BitmapCreateOptions.None, BitmapCacheOption.OnLoad)
                 .Frames.MaxBy(frame => frame.PixelWidth)
         };
         app.MainWindow = window;
-        WindowChrome.SetWindowChrome(window, new WindowChrome
+        var chrome = new WindowChrome
         {
             CaptionHeight = 0, ResizeBorderThickness = new Thickness(6),
-            CornerRadius = new CornerRadius(8), GlassFrameThickness = new Thickness(-1),
+            CornerRadius = new CornerRadius(0), GlassFrameThickness = new Thickness(0),
             UseAeroCaptionButtons = false
-        });
+        };
+        WindowChrome.SetWindowChrome(window, chrome);
         var browser = new WebView2CompositionControl { AllowExternalDrop = false };
         window.Content = browser;
         using var output = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false)) { AutoFlush = true };
@@ -65,7 +65,20 @@ internal static class Program
         tray.DoubleClick += (_, _) => Show();
         tray.ContextMenuStrip.Items.Add("显示 Shared Brain", null, (_, _) => Show());
         var quitting = false;
+        var usesBackdrop = false;
         void Quit() { quitting = true; app.Shutdown(); }
+        void ApplyTheme(bool dark)
+        {
+            var color = dark ? Color.FromRgb(20, 24, 32) : Color.FromRgb(241, 246, 253);
+            window.Background = usesBackdrop ? Brushes.Transparent : new SolidColorBrush(color);
+            browser.DefaultBackgroundColor = usesBackdrop ? System.Drawing.Color.Transparent
+                : System.Drawing.Color.FromArgb(color.R, color.G, color.B);
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+            {
+                var value = dark ? 1 : 0;
+                DwmSetWindowAttribute(new WindowInteropHelper(window).Handle, 20, ref value, 4);
+            }
+        }
         tray.ContextMenuStrip.Items.Add("退出", null, (_, _) => Quit());
         window.Closing += (_, e) => { if (!quitting) { e.Cancel = true; window.Hide(); } };
         window.SourceInitialized += (_, _) =>
@@ -77,21 +90,47 @@ internal static class Program
                 if (message == 0x18 && wParam != 0 && window.Visibility != Visibility.Visible) window.Show();
                 return 0;
             });
-            var round = 2; var light = 0; var acrylic = 3; var cloaked = 1;
-            Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(handle, 13, ref cloaked, 4));
-            var margins = new Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
-            Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(handle, 20, ref light, 4));
-            Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(handle, 33, ref round, 4));
-            Marshal.ThrowExceptionForHR(DwmExtendFrameIntoClientArea(handle, ref margins));
-            Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(handle, 38, ref acrylic, 4));
+            var cloaked = 1;
+            DwmSetWindowAttribute(handle, 13, ref cloaked, 4);
+            // Decorations are optional; unsupported Windows versions keep an opaque surface.
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+            {
+                var round = 2;
+                DwmSetWindowAttribute(handle, 33, ref round, 4);
+            }
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22621))
+            {
+                var acrylic = 3;
+                var margins = new Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
+                usesBackdrop = DwmSetWindowAttribute(handle, 38, ref acrylic, 4) >= 0
+                    && DwmExtendFrameIntoClientArea(handle, ref margins) >= 0;
+                if (usesBackdrop) chrome.GlassFrameThickness = new Thickness(-1);
+            }
+            ApplyTheme(Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1) is int mode && mode == 0);
         };
         window.StateChanged += (_, _) => browser.Visibility = window.WindowState == WindowState.Minimized ? Visibility.Collapsed : Visibility.Visible;
         window.ContentRendered += InitializeBrowser;
         async void InitializeBrowser(object? sender, EventArgs e)
         {
             window.ContentRendered -= InitializeBrowser;
-            var environment = await CoreWebView2Environment.CreateAsync(null, args[1]);
-            await browser.EnsureCoreWebView2Async(environment);
+            try
+            {
+                // Reject file/directory conflicts before Edge opens its own blocking dialog.
+                Directory.CreateDirectory(Path.Combine(args[1], "EBWebView"));
+                var environment = await CoreWebView2Environment.CreateAsync(null, args[1]);
+                await browser.EnsureCoreWebView2Async(environment);
+            }
+            catch (Exception error)
+            {
+                var reason = error is IOException or UnauthorizedAccessException
+                    ? "无法创建或访问界面数据目录。请检查该位置是否被同名文件占用，以及文件夹的读写权限。"
+                    : "无法初始化 WebView2。请确认 Microsoft Edge WebView2 Runtime 已安装，且应用数据目录可写。";
+                MessageBox.Show($"{reason}\n\n数据目录：{args[1]}\n\n{error.Message} (0x{error.HResult:X8})",
+                    "Shared Brain 启动失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                Environment.ExitCode = 1;
+                Quit();
+                return;
+            }
             browser.ZoomFactor = 1.5;
             browser.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             browser.CoreWebView2.WebMessageReceived += (_, e) =>
@@ -106,14 +145,21 @@ internal static class Program
                         case "minimize": window.WindowState = WindowState.Minimized; break;
                         case "maximize": window.WindowState = window.WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized; break;
                         case "close": window.Close(); break;
+                        case "theme:dark": ApplyTheme(true); break;
+                        case "theme:light": ApplyTheme(false); break;
                     }
                     return;
                 }
                 if (value.GetProperty("method").GetString() == "choose_vault")
                 {
-                    var picker = new Microsoft.Win32.OpenFolderDialog { Title = "选择文件夹" };
-                    var path = picker.ShowDialog(window) == true ? picker.FolderName : "";
-                    browser.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { id = value.GetProperty("id").GetInt32(), result = new { path } }));
+                    var requestId = value.GetProperty("id").GetInt32();
+                    // Native modal UI must open after the WebView2 event handler returns.
+                    app.Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        var picker = new Microsoft.Win32.OpenFolderDialog { Title = "选择文件夹" };
+                        var path = picker.ShowDialog(window) == true ? picker.FolderName : "";
+                        browser.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { id = requestId, result = new { path } }));
+                    }));
                 }
                 else output.WriteLine(e.WebMessageAsJson);
             };
@@ -123,12 +169,10 @@ internal static class Program
                     await app.Dispatcher.InvokeAsync(() => browser.CoreWebView2.PostWebMessageAsJson(line));
                 await app.Dispatcher.InvokeAsync(Quit);
             });
-            browser.CoreWebView2.NavigationCompleted += async (_, _) =>
+            browser.CoreWebView2.NavigationCompleted += (_, _) =>
             {
-                // Render the first frame before revealing the acrylic window.
-                await browser.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, Stream.Null);
                 var cloaked = 0;
-                Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(new WindowInteropHelper(window).Handle, 13, ref cloaked, 4));
+                DwmSetWindowAttribute(new WindowInteropHelper(window).Handle, 13, ref cloaked, 4);
                 window.Activate();
             };
             browser.Source = new Uri(Path.Combine(assets, "index.html"));

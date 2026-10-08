@@ -177,8 +177,32 @@ class DesktopAPI:
     def projects(self):
         return self._call(self._service.projects)
 
-    def configure_project(self, name, paths, project_id=""):
-        return self._call(self._service.configure_project, name, paths, project_id)
+    def configure_project(self, name, paths, project_id="", parent_project_id=""):
+        return self._call(self._service.configure_project, name, paths, project_id, parent_project_id)
+
+    def project_changes(self, project_id):
+        return self._call(self._service.project_changes, project_id)
+
+    def create_commit(self, project_id, item_ids, message=""):
+        return self._call(self._service.create_commit, project_id, item_ids, message)
+
+    def project_commits(self, project_id):
+        return self._call(self._service.project_commits, project_id)
+
+    def project_commit(self, project_id, commit_id):
+        return self._call(self._service.project_commit, project_id, commit_id)
+
+    def merge_commit(self, project_id, commit_id, resolutions=None):
+        return self._call(self._service.merge_commit, project_id, commit_id, resolutions)
+
+    def documents(self, project="", query=""):
+        return self._call(self._service.documents, project, query)
+
+    def document(self, path):
+        return self._call(self._service.document, path)
+
+    def open_document(self, path):
+        return self._call(self._service.open_document, path)
 
     def delete_project(self, project_id):
         return self._call(self._service.delete_project, project_id)

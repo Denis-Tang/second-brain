@@ -114,6 +114,157 @@ def test_configured_paths_nested_matches_and_live_rebinding(tmp_path):
     assert service.bootstrap(str(parent), "s1", "Codex")["independent"]
 
 
+def test_two_level_projects_keep_directories_and_allow_same_child_name(tmp_path):
+    service, _, started = setup(tmp_path)
+    vault = service._vault()
+    workspaces = [tmp_path / name for name in ("root-two", "child-one", "child-two", "grandchild")]
+    for path in workspaces:
+        path.mkdir()
+    document = workspaces[1] / "keep.txt"
+    document.write_text("用户工作区", encoding="utf-8")
+    other = vault.configure_project("另一根项目", [str(workspaces[0])])
+    child = vault.configure_project("子项目1", [str(workspaces[1])], parent_project_id=started["project"])
+    sibling = vault.configure_project("子项目1", [str(workspaces[2])], parent_project_id=other["project_id"])
+    assert child["directory"] != sibling["directory"]
+    assert child["parent_project_id"] == started["project"]
+    renamed = vault.configure_project("改名", child["paths"], child["project_id"], started["project"])
+    assert renamed["directory"] == child["directory"]
+    assert document.read_text(encoding="utf-8") == "用户工作区"
+    with pytest.raises(ValueError, match="名称已存在"):
+        vault.configure_project("改名", [str(workspaces[3])], parent_project_id=started["project"])
+    with pytest.raises(ValueError, match="只能属于"):
+        vault.configure_project("孙项目", [str(workspaces[3])], parent_project_id=child["project_id"])
+    with pytest.raises(ValueError, match="先处理子项目"):
+        vault.delete_project(started["project"])
+    vault.delete_project(child["project_id"])
+    assert document.exists() and vault.project(started["project"])
+
+
+def test_selected_commit_merges_snapshots_and_requires_conflict_choice(tmp_path):
+    service, root_context, started = setup(tmp_path)
+    vault = service._vault()
+    parent_id = started["project"]
+    service.save(root_context, goal="根目标", progress="根已有进度", next_actions=["根下一步"])
+    parent_memory = vault.save_memory("相同结论", "父已有正文", parent_id)
+    workspace = tmp_path / "feature"
+    workspace.mkdir()
+    child = vault.configure_project("功能分支", [str(workspace)], parent_project_id=parent_id)
+    service.bootstrap(str(workspace), "branch", "Codex")
+    context = {"role": "root", "session_id": "branch", "root_session_id": "branch"}
+    saved = service.save(context, summary="frozenmarker", goal="分支目标", progress="子进度",
+                         next_actions=["子下一步"], task_id="feature", memory={"title": "相同结论", "body": "子提交正文"})
+    vault.save_memory("分支技能", "技能步骤", child["project_id"], kind="skill")
+    group = vault.group(child["project_id"])
+    for kind in ("source", "decision"):
+        vault.write(f"项目/{group}/{kind}.md", {"kind": kind, "title": kind, "project": child["project_id"]}, kind + "内容")
+    changes = vault.project_changes(child["project_id"])
+    commit = vault.create_commit(child["project_id"], [item["id"] for item in changes["items"]], "hiddencommitmarker")
+    assert len(commit["items"]) == 7
+    assert len(commit["conflicts"]) == 1
+    assert not vault.search("hiddencommitmarker", "all")
+    assert all(row["kind"] != "commit" for row in vault.pending())
+    summary_path = vault.root / saved["summary"]["path"]
+    service.save(context, summary="unmergedmarker")
+    before = summary_path.read_bytes()
+    blocked = vault.merge_commit(child["project_id"], commit["id"])
+    assert not blocked["merged"] and vault.read(vault.root / parent_memory["path"])[1].strip() == "父已有正文"
+    outcome = vault.merge_commit(child["project_id"], commit["id"], {saved["memory"]["path"]: "keep_parent"})
+    assert outcome["merged"] and len(outcome["applied"]) == 6
+    assert summary_path.read_bytes() == before
+    assert vault.read(summary_path)[0]["project"] == child["project_id"]
+    assert not service.search("unmergedmarker", parent_id)["results"]
+    frozen = service.search("frozenmarker", parent_id)["results"]
+    assert len(frozen) == 1 and frozen[0]["kind"] == "source"
+    assert saved["summary"]["path"] in frozen[0]["sources"]
+    assert commit["path"] in frozen[0]["sources"]
+    parent = vault.project(parent_id)
+    assert parent["goal"] == "根目标" and "根已有进度" in parent["progress"] and "子进度" in parent["progress"]
+    assert parent["next_actions"] == ["根下一步", "子下一步"]
+    assert service.status()["counts"]["sessions"] == 1
+    second = vault.create_commit(child["project_id"], [saved["memory"]["path"]], "采用分支结论")
+    vault.merge_commit(child["project_id"], second["id"], {saved["memory"]["path"]: "use_commit"})
+    metadata, body = vault.read(vault.root / parent_memory["path"])
+    assert body.strip() == "子提交正文" and second["path"] in metadata["sources"]
+    identical = vault.create_commit(child["project_id"], [saved["memory"]["path"]], "相同成果")
+    assert identical["conflicts"] == []
+    assert vault.merge_commit(child["project_id"], identical["id"])["merged"]
+    metadata, body = vault.read(vault.root / parent_memory["path"])
+    vault.write(parent_memory["path"], {**metadata, "feedback_pending": True}, body)
+    child_metadata, child_body = vault.read(vault.root / saved["memory"]["path"])
+    vault.write(saved["memory"]["path"], {**child_metadata, "conditions": {"系统": "Windows"}}, child_body)
+    changed = vault.create_commit(child["project_id"], [saved["memory"]["path"]], "仅条件不同")
+    conflict = changed["conflicts"][0]
+    assert "适用条件" in conflict["parent_text"] and "Windows" in conflict["submitted_text"]
+    assert "待复核：true" in conflict["parent_text"] and "待复核：false" in conflict["submitted_text"]
+    vault.merge_commit(child["project_id"], changed["id"], {saved["memory"]["path"]: "use_commit"})
+    metadata, _ = vault.read(vault.root / parent_memory["path"])
+    assert metadata["feedback_pending"] is True and metadata["conditions"] == {"系统": "Windows"}
+    assert not vault.search("子提交正文", parent_id)
+
+
+def test_child_bootstrap_records_successful_agents_and_preserves_summary_path(tmp_path, monkeypatch):
+    service = BrainService(tmp_path / "app")
+    service.initialize(str(tmp_path / "vault"))
+    workspace = tmp_path / "workspace"
+    child_workspace = workspace / "feature"
+    child_workspace.mkdir(parents=True)
+    parent = service.configure_project("主项目", [str(workspace)])["project"]
+    child = service.configure_project("功能分支", [str(child_workspace)], parent_project_id=parent["project_id"])["project"]
+    assert service.status()["connections"] == []
+    monkeypatch.setattr("shared_brain.service.now", lambda: "2026-10-08T01:00:00+00:00")
+    service.bootstrap(str(workspace), "root", "Codex")
+    service.save({"role": "root", "session_id": "root", "root_session_id": "root"},
+                 memory={"title": "sharedpolicy", "body": "主项目已有知识"})
+    with pytest.raises(ValueError, match="不存在"):
+        service.bootstrap(str(tmp_path / "absent"), "failed", "Claude")
+    assert [connection["agent"] for connection in service.status()["connections"]] == ["Codex"]
+    monkeypatch.setattr("shared_brain.service.now", lambda: "2026-10-08T02:00:00+00:00")
+    boot = service.bootstrap(str(child_workspace), "child", "Claude", task="sharedpolicy")
+    assert boot["project"] == child["project_id"]
+    assert boot["project_context"]["parent"] == {"project_id": parent["project_id"], "title": "主项目"}
+    assert boot["relevant"][0]["project"] == parent["project_id"]
+    context = {"role": "root", "session_id": "child", "root_session_id": "child"}
+    first = service.save(context, summary="首次阶段")
+    second = service.save(context, summary="后续阶段")
+    assert first["summary"]["path"] == second["summary"]["path"]
+    assert first["summary"]["path"].startswith("会话总结/Claude/")
+    assert service._vault().read(tmp_path / "vault" / first["summary"]["path"])[0]["project"] == child["project_id"]
+    reopened = BrainService(service.settings.home)
+    assert reopened.status()["connections"] == [
+        {"agent": "Claude", "last_seen": "2026-10-08T02:00:00+00:00"},
+        {"agent": "Codex", "last_seen": "2026-10-08T01:00:00+00:00"}]
+
+
+def test_documents_backlinks_open_original_and_respect_visibility(tmp_path, monkeypatch):
+    service, context, started = setup(tmp_path)
+    saved = service.save(context, summary="关联来源正文", memory={"title": "可用知识", "body": "依据来源的结论"})
+    vault = service._vault()
+    summary = saved["summary"]["path"]
+    for filename, metadata in (("pending", {"feedback_pending": True}), ("merged", {"merged_into": saved["memory"]["path"]})):
+        vault.write(f"项目/示例/知识/{filename}.md", {"kind": "memory", "title": filename,
+                    "project": started["project"], "sources": [summary], **metadata}, "隐藏记录")
+    listed = service.documents("all")["documents"]
+    assert {item["path"] for item in listed} == {summary, saved["memory"]["path"]}
+    assert service.documents(started["project"], "可用")["documents"][0]["path"] == saved["memory"]["path"]
+    original = (vault.root / summary).read_bytes()
+    note = service.document(saved["memory"]["path"])
+    assert [item["path"] for item in note["sources"]] == [summary]
+    assert "shared-brain:sources" not in note["body"]
+    linked = service.document(summary.replace("/", "\\"))
+    assert linked["path"] == summary
+    assert [item["path"] for item in linked["backlinks"]] == [saved["memory"]["path"]]
+    opened = []
+    monkeypatch.setattr("shared_brain.service.os.startfile", opened.append)
+    assert service.open_document(summary) == {"opened": True}
+    assert opened == [vault.root / summary]
+    for path in ("../outside.md", "草稿/示例/note.md", "知识/file.exe"):
+        with pytest.raises(ValueError, match="知识库中的正文"):
+            service.open_document(path)
+        with pytest.raises(ValueError, match="知识库中的正文"):
+            service.document(path)
+    assert (vault.root / summary).read_bytes() == original
+
+
 def test_existing_project_configuration_preserves_history_and_ignores_old_bindings(tmp_path):
     service, context, started = setup(tmp_path)
     vault = service._vault()

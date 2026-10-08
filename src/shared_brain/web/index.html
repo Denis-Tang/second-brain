@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Shared Brain</title>
+  <script>const preference=localStorage.getItem('appearance')||'system';document.documentElement.dataset.theme=preference==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):preference;</script>
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -22,7 +23,7 @@
         <div class="empty-state">正在读取历史记录…</div>
       </div>
 <div class="charts"><div class="card"><div class="toolbar"><div><h2 id="chart-title">会话总结</h2><p class="muted">累计变化</p></div></div><div class="chart" id="chart"></div><div class="axis"><span id="axis-start">9 月 25 日</span><span id="axis-end"></span></div></div>
-<div class="card"><div class="toolbar"><div><h2>每日知识积累</h2><p class="muted">新增内容 · 估算 token</p></div><div class="tabs"><button id="view-2d" class="active">2D</button><button id="view-3d">3D</button></div></div><div id="heat2d" class="heat-scroll"><div id="heat-grid" class="heat-grid"></div></div><div id="heat3d" class="heat3d" hidden><canvas id="terrain" class="terrain" role="img" aria-label="每日新增知识三维柱图"></canvas></div><div class="rotate-controls" id="rotate-controls" hidden><span class="legend-text">拖动旋转，滚轮缩放</span><div><button id="rotate" class="secondary">自动旋转</button><button id="reset" class="secondary">复位</button></div></div><div class="heat-footer"><span id="heat-period"></span><span class="legend">少 <i style="background:#ebedf0"></i><i style="background:#a7f3d0"></i><i style="background:#6ee7b7"></i><i style="background:#34d399"></i><i style="background:#10b981"></i> 多</span></div></div>
+<div class="card"><div class="toolbar"><div><h2>每日知识积累</h2><p class="muted">新增内容 · 估算 token</p></div><div class="tabs"><button id="view-2d" class="active">2D</button><button id="view-3d">3D</button></div></div><div id="heat2d" class="heat-scroll"><div id="heat-grid" class="heat-grid"></div></div><div id="heat3d" class="heat3d" hidden><canvas id="terrain" class="terrain" role="img" aria-label="每日新增知识三维柱图"></canvas></div><div class="rotate-controls" id="rotate-controls" hidden><span class="legend-text">拖动旋转，滚轮缩放</span><div><button id="rotate" class="secondary">自动旋转</button><button id="reset" class="secondary">复位</button></div></div><div class="heat-footer"><span id="heat-period"></span><span class="legend">少 <i style="background:var(--heat-0)"></i><i style="background:var(--heat-1)"></i><i style="background:var(--heat-2)"></i><i style="background:var(--heat-3)"></i><i style="background:var(--heat-4)"></i> 多</span></div></div>
 </div>
       <p class="hint growth-note" id="growth-note">新增 token 从本机开始记录后累计。</p>
       <form id="global-prompt-form" class="card">
@@ -36,12 +37,13 @@
     <section id="projects" class="page" aria-label="项目配置">
       <div class="toolbar">
         <h2 id="project-count">全部项目</h2>
-
+        <div class="project-toolbar-actions"><button id="browse-documents" class="button secondary" type="button">会话与关联</button><div class="tabs" aria-label="项目卡片显示方式"><button id="all-compact" type="button" aria-pressed="false">简洁</button><button id="all-detail" type="button" aria-pressed="false">详细</button></div></div>
       </div>
-      <div id="project-list" aria-live="polite"></div>
+      <div id="project-list" class="root-list" aria-label="项目"></div>
       <dialog id="project-editor" aria-labelledby="project-form-title">
       <form id="project-form">
         <h2 id="project-form-title">新增项目</h2>
+        <p id="project-parent-label" class="hint" hidden></p>
         <label for="project-name">项目名称</label>
         <input id="project-name" required maxlength="100" placeholder="例如：网站开发">
         <label>关联工作目录</label>
@@ -62,6 +64,21 @@
           <button type="button" id="confirm-delete-project" class="button danger">删除项目</button>
         </div>
       </dialog>
+      <dialog id="project-results" aria-labelledby="project-results-title" class="wide-dialog">
+        <div class="card-heading"><h2 id="project-results-title">提交与合并</h2><button data-close="project-results" class="button secondary" type="button">关闭</button></div>
+        <p class="hint" id="project-results-parent"></p>
+        <form id="commit-form">
+          <div id="commit-items" class="result-list"></div>
+          <label for="commit-message">提交说明</label><input id="commit-message" maxlength="200" placeholder="例如：完成检索路径优化">
+          <div class="form-actions"><button class="button primary" type="submit">提交所选成果</button></div>
+        </form>
+        <h3>提交记录</h3><div id="commit-history" class="result-list"></div>
+      </dialog>
+      <dialog id="merge-dialog" aria-labelledby="merge-title" class="wide-dialog">
+        <h2 id="merge-title">合并到主项目</h2><p id="merge-description" class="hint"></p>
+        <div id="merge-items" class="result-list"></div>
+        <form id="merge-form"><div id="merge-conflicts" class="result-list"></div><div class="form-actions"><button data-close="merge-dialog" class="button secondary" type="button">取消</button><button id="merge-submit" class="button primary" type="submit">合并成果</button></div></form>
+      </dialog>
     </section>
 
     <section id="settings" class="page" aria-label="设置">
@@ -78,6 +95,8 @@
         <div class="action-row"><button id="close-setup-guide" class="button primary" type="button" autofocus>知道了</button></div>
       </dialog>
       <form id="settings-form">
+        <article class="card"><div class="theme-row"><label id="appearance-label">外观</label><button id="theme-preference" class="button secondary appearance-button" type="button" value="system" aria-haspopup="menu" aria-expanded="false" aria-labelledby="appearance-label appearance-value"><span id="appearance-value">跟随系统</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button></div></article>
+        <article class="card"><div class="card-heading"><h2>Agent 接入</h2></div><p class="hint">显示最近一次成功加载记忆的记录。</p><div id="agent-connections"></div></article>
         <article class="card">
           <div class="card-heading"><h2>知识库</h2></div>
           <label for="vault-path">知识库文件夹</label>
@@ -103,6 +122,17 @@
       <div class="settings-footer"><button class="button quiet" type="button" data-copy-unbind disabled>复制解绑提示词</button></div>
     </section>
 
+    <dialog id="documents-dialog" aria-labelledby="documents-title" class="wide-dialog">
+      <div class="card-heading"><h2 id="documents-title">会话与关联</h2><button data-close="documents-dialog" class="button secondary" type="button">关闭</button></div>
+      <form id="document-search" class="input-row"><input id="document-query" type="search" aria-label="查找资料" placeholder="查找会话、知识或任务"><button class="button secondary" type="submit">查找</button></form>
+      <p class="hint" id="documents-scope"></p><div id="document-list" class="document-list"></div>
+    </dialog>
+    <dialog id="document-dialog" aria-labelledby="document-title" class="wide-dialog">
+      <div class="card-heading"><h2 id="document-title"></h2><button data-close="document-dialog" class="button secondary" type="button">关闭</button></div>
+      <button id="open-document" class="button secondary" type="button">打开原文</button>
+      <div id="document-links" class="document-links"></div><pre id="document-body" class="document-body"></pre>
+    </dialog>
+
     <dialog id="update-dialog" aria-labelledby="update-title">
       <h2 id="update-title">检查更新</h2>
       <p id="update-summary"></p>
@@ -126,6 +156,13 @@
   </main></div>
   <div id="toast" role="status" aria-live="polite" hidden></div>
   <div id="tooltip" class="tooltip" hidden></div>
+  <dialog id="tree-dialog" aria-labelledby="tree-title">
+    <div class="tree-dialog-heading"><h2 id="tree-title"></h2><button type="button" id="close-tree" class="button quiet close-button" aria-label="关闭项目关系">×</button></div>
+    <div class="toolbar tree-toolbar"><button type="button" id="new-child" class="button secondary">新建子项目</button><div class="tabs" aria-label="当前项目组卡片显示方式"><button id="tree-compact" type="button" aria-pressed="false">简洁</button><button id="tree-detail" type="button" aria-pressed="false">详细</button></div></div>
+    <div id="tree-board" class="tree-board"></div>
+  </dialog>
+  <div id="app-menu" class="app-menu" role="menu" popover="manual" hidden></div>
+  <dialog id="directory-dialog" aria-labelledby="directory-title"><h2 id="directory-title"></h2><p id="directory-path" class="directory-path"></p><div class="action-row form-actions"><button type="button" class="button secondary" data-close="directory-dialog">关闭</button></div></dialog>
   <script src="bridge.js"></script>
   <script src="app.js"></script>
 </body>

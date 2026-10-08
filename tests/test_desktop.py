@@ -90,8 +90,8 @@ def test_global_prompt_saves_separately_and_reloads_after_vault_switch():
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
 const elements = new Map(), saves = [], configurations = [], copied = [];
 const get = id => {
-  if (!elements.has(id)) elements.set(id, {value: '', checked: false, dataset: {},
-    getContext() {return {};}, classList: {toggle() {}}, addEventListener(event, fn) {this[event] = fn;}});
+  if (!elements.has(id)) elements.set(id, {value: '', checked: false, dataset: {}, matches(selector) {return selector.includes(id);},
+    replaceChildren() {}, getContext() {return {};}, classList: {toggle() {}}, addEventListener(event, fn) {this[event] = fn;}});
   return elements.get(id);
 };
 let state = {ready: true, global_prompt: '旧库提示词', settings: {
@@ -155,12 +155,24 @@ def test_project_editor_separates_creation_editing_and_confirmed_deletion():
     script = r'''
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
 const elements = new Map(), calls = [], projects = [], deletions = [], copied = [];
-const element = () => ({value: '', dataset: {}, children: [], getContext() {return {};}, classList: {toggle() {}},
-  get lastChild() {return this.children[this.children.length - 1];},
-  addEventListener(event, fn) {this[event] = fn;}, append(...items) {this.children.push(...items);},
-  replaceChildren() {this.children = [];}, focus() {}, showModal() {this.open = true;}, close() {this.open = false;}});
+const element = () => {
+  const el = {value: '', dataset: {}, children: [], hidden: true, className: '', style: {},
+    offsetWidth: 172, offsetHeight: 120, getContext() {return {};},
+    get lastChild() {return this.children.at(-1);}, get firstElementChild() {return this.children[0];},
+    addEventListener(event, fn) {this[event] = fn;}, append(...items) {this.children.push(...items);},
+    contains() {return false;}, closest() {return null;}, setAttribute(name, value) {this[name] = String(value);},
+    matches(selector) {return selector === ':popover-open' ? !!this.popoverOpen : selector.startsWith('.') && this.className.split(' ').includes(selector.slice(1));},
+    querySelector(selector) {return this.querySelectorAll(selector)[0] || null;},
+    querySelectorAll(selector) {return this.children.flatMap(child => [...(child.matches(selector) ? [child] : []), ...child.querySelectorAll(selector)]);},
+    getBoundingClientRect() {return {right: 500, top: 100, bottom: 140};},
+    replaceChildren() {this.children = [];}, focus() {}, showModal() {this.open = true;}, close() {this.open = false;},
+    showPopover() {this.popoverOpen = true;}, hidePopover() {this.popoverOpen = false;}};
+  el.classList = {toggle(name, active) {const values = new Set(el.className.split(' ')); active ? values.add(name) : values.delete(name); el.className = [...values].join(' ');}, add(name) {this.toggle(name, true);}};
+  return el;
+};
 const get = id => {if (!elements.has(id)) elements.set(id, element()); return elements.get(id);};
-const context = {ResizeObserver: class {observe() {}}, IntersectionObserver: class {observe() {}}, document: {addEventListener() {}, getElementById: get, querySelectorAll: () => [], createElement: element},
+const context = {ResizeObserver: class {observe() {}}, IntersectionObserver: class {observe() {}}, document: {body: element(), addEventListener() {}, getElementById: get, querySelectorAll: () => [], createElement: element},
+  localStorage: {getItem() {return null;}, setItem() {}}, innerWidth: 1000, innerHeight: 800,
   window: {addEventListener() {}, desktop: {
     projects: async () => ({projects}),
     delete_project: async id => {
@@ -170,8 +182,8 @@ const context = {ResizeObserver: class {observe() {}}, IntersectionObserver: cla
     },
     configure_project: async (name, paths, id) => {
       calls.push({name, paths: [...paths], id});
-      if (id) projects.find(p => p.project_id === id).name = name;
-      else projects.push({project_id: String(projects.length + 1), name, paths, directory: name});
+      if (id) Object.assign(projects.find(p => p.project_id === id), {name, paths: [...paths]});
+      else projects.push({project_id: String(projects.length + 1), name, paths: [...paths], directory: name});
       return {message: 'saved'};
     }}}, navigator: {clipboard: {writeText: async text => copied.push(text)}}, setTimeout() {}, clearTimeout() {}};
 vm.createContext(context);
@@ -179,6 +191,7 @@ vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 vm.runInContext('vaultReady = true', context);
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const submit = async id => {get('project-form').submit({preventDefault() {}, submitter: get(id)}); await settle();};
+const cards = () => get('project-list').children;
 (async () => {
   for (const name of ['项目一', '项目二', '项目三']) {
     get('new-project').click();
@@ -190,40 +203,52 @@ const submit = async id => {get('project-form').submit({preventDefault() {}, sub
     assert.equal(get('project-editor').open, false);
   }
   assert.equal(get('project-count').textContent, '全部项目（3）');
-  const card = get('project-list').children[0];
-  const actions = card.children[0].children[1], path = card.children[1].children[1];
+  const card = cards()[0];
+  const actions = card.querySelector('.project-actions'), path = card.querySelector('.project-path-row');
   assert.equal(actions.children[0].textContent, '编辑');
-  assert.equal(actions.children[1].children[0].textContent, '···');
-  assert.equal(actions.children[1].children[0].ariaLabel, '更多操作');
-  assert.equal(card.children[1].children[0].textContent, '工作目录');
-  assert.equal(card.children[2].children[0].textContent, '项目资料');
+  assert.equal(actions.children[1].textContent, '···');
+  assert.equal(actions.children[1]['aria-label'], '项目一 更多操作');
+  assert.equal(card.querySelector('.project-field').children[0].textContent, '工作目录');
+  const directory = card.querySelector('.project-card-footer').children[0];
+  assert.equal(directory.textContent, '资料目录');
+  directory.click(); await settle();
+  assert.equal(get('directory-path').textContent, '项目一');
+  get('directory-dialog').close();
   assert.equal(path.children[0].textContent, 'D:/work');
   assert.equal(path.children[1].textContent, '复制路径');
   path.children[1].click();
   await settle();
   assert.deepEqual(copied, ['D:/work']);
-  get('project-list').children[1].children[0].children[1].children[0].click();
+  cards()[1].children[0].children[1].children[0].click();
+  assert.equal(get('project-paths').children[0].children.length, 2, 'editor only has removal, no duplicate copy');
+  get('project-paths').children[0].children[1].click(); await settle();
+  get('cancel-project').click();
+  assert.deepEqual(projects[1].paths, ['D:/work']);
+  cards()[1].querySelector('.project-actions').children[0].click();
+  get('project-paths').children[0].children[1].click(); await settle();
   get('project-name').value = '项目二修改';
   await submit('save-project');
   assert.equal(get('project-editor').open, false);
+  assert.deepEqual(projects[1].paths, [], 'last working directory can be removed');
   get('new-project').click();
   get('project-name').value = '项目四';
   await submit('save-project');
   assert.deepEqual(calls.map(c => c.id), ['', '', '', '2', '']);
   assert.deepEqual(projects.map(p => p.name), ['项目一', '项目二修改', '项目三', '项目四']);
   assert.equal(get('project-count').textContent, '全部项目（4）');
-  const menu = get('project-list').children[1].children[0].children[1].children[1];
-  menu.open = true;
-  menu.children[1].lastChild.click();
+  const menu = get('app-menu');
+  cards()[1].querySelector('.menu-trigger').click(); await settle();
+  menu.lastChild.click();
   await settle();
   assert.equal(get('delete-project-dialog').open, true);
-  assert.equal(menu.open, false);
+  assert.equal(menu.popoverOpen, false);
   assert.match(get('delete-project-question').textContent, /项目二修改/);
   assert.deepEqual(deletions, []);
   get('cancel-delete-project').click();
   assert.equal(get('delete-project-dialog').open, false);
   assert.deepEqual(deletions, []);
-  get('project-list').children[2].children[0].children[1].children[1].children[1].lastChild.click();
+  cards()[2].querySelector('.menu-trigger').click(); await settle();
+  menu.lastChild.click(); await settle();
   get('confirm-delete-project').click({currentTarget: get('confirm-delete-project')});
   await settle();
   assert.deepEqual(deletions, ['3']);
@@ -355,7 +380,7 @@ def test_version_chip_checks_updates_downloads_and_copies_the_agent_prompt():
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
 const elements = new Map(), copied = [], opened = [], folders = [], applied = [];
 const element = () => ({value: '', textContent: '', hidden: false, open: false, disabled: false, checked: false,
-  dataset: {}, children: [], style: {}, getContext() {return {};}, classList: {toggle() {}},
+  dataset: {}, children: [], style: {}, matches() {return false;}, getContext() {return {};}, classList: {toggle() {}},
   addEventListener(event, fn) {this[event] = fn;},
   append(...items) {this.children.push(...items);}, replaceChildren() {this.children = [];},
   showModal() {this.open = true;}, close() {this.open = false;}});

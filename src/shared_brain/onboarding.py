@@ -122,7 +122,7 @@ MCP 服务名统一为 shared_brain。
 薄入口与执行规则：
 1. 新根会话调用 bootstrap(cwd,session_id,agent,workspace_root,task=当前任务描述)，task 用不超过 500 字符的简短描述。session_id 必须稳定且取自宿主，不能每阶段随机生成；workspace_root 使用宿主工作区根目录。未提供时使用启动目录；临时 cd 不换工作区。任务未知可省略 task，明确后重新调用。非空 global_prompt 全文遵循；relevant 只返回少量相关知识/技能，其他按需 search。草稿不自动加载、检索或夜间整理。
 2. 项目仅在应用的“项目配置”页面管理。bootstrap 按配置路径及子目录匹配，更具体目录优先；未配置路径直接作为独立会话，不询问、不自行创建或绑定项目。project_directory 是项目资料绝对目录，项目卡、任务和决策使用 save 写入；会话总结仍在会话总结目录，项目索引链接它们。配置变更后重新 bootstrap；保存时程序也重新核对归属。代码与交付物留在工作目录。
-3. 按需 search。项目会话默认传 bootstrap 返回的项目 ID，只搜本项目；独立会话 project 留空，按相关性搜索公共池和全部项目。明确需要公共池时传 project="independent"，跨项目时传 project="all"。检索模式默认 mode="auto"：中文按二字滑窗匹配，代码风格的查询（标识符、路径、文件名）自动拆分 camelCase/snake_case 并给路径与标题加权；已知查询类型时可显式传 mode="text" 或 mode="code"，返回的 mode 字段说明实际使用的模式。核对来源、适用条件与验证依据；涉及已知失败对象时可传 target/method/environment。不要为每个廉价动作强制检索。对象、方法、环境未知时不当成匹配；不把一页失败泛化为网站永久不可用。
+3. 按需 search。项目会话默认传 bootstrap 返回的项目 ID，搜索本项目；子项目同时继承主项目知识；独立会话 project 留空，按相关性搜索公共池和全部项目。明确需要公共池时传 project="independent"，跨项目时传 project="all"。检索模式默认 mode="auto"：中文按二字滑窗匹配，代码风格的查询（标识符、路径、文件名）自动拆分 camelCase/snake_case 并给路径与标题加权；已知查询类型时可显式传 mode="text" 或 mode="code"，返回的 mode 字段说明实际使用的模式。核对来源、适用条件与验证依据；涉及已知失败对象时可传 target/method/environment。不要为每个廉价动作强制检索。对象、方法、环境未知时不当成匹配；不把一页失败泛化为网站永久不可用。
 4. 有用阶段由根代理 save，context 来自宿主，包含 role=root、session_id 与相等的 root_session_id；子代理只回传成果、失败和证据。项目会话 summary 传整份最新总结，保留必要历史阶段，项目进度当场更新；独立会话也保存完整总结，但不创建项目卡、任务卡、决策或单独 memory。归档仅改状态，不移动文档。
 5. 实际失败放 errors 数组，每项 target/method/symptom，建议提供 environment、attempts、workaround、impact=low或high。同一问题用同一 id 补充尝试。每会话一份 JSON。没有错误不建空报告；不要把 fail 字符串或预期探测未命中当成实际失败，不编造因果。
 6. 错误立即可搜。后续检查实际效果成功后调用 feedback，关联原 session_id/error_id，提供 target/method/environment/evidence；换方法成功是绕行，不抹掉原方法失败。项目已验证知识可用 memory 当场保存并附 evidence。

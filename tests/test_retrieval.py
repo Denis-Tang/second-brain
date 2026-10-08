@@ -16,6 +16,33 @@ def make_vault(tmp_path, name="vault"):
     return Vault(tmp_path / name, tmp_path / "app")
 
 
+def test_child_search_inherits_live_parent_knowledge_without_parent_sessions(tmp_path):
+    service = BrainService(tmp_path / "app")
+    service.initialize(str(tmp_path / "vault"))
+    vault = service._vault()
+    parent_work = tmp_path / "parent"
+    child_work = tmp_path / "child"
+    parent_work.mkdir()
+    child_work.mkdir()
+    parent = vault.configure_project("主项目", [str(parent_work)])
+    child = vault.configure_project("子项目", [str(child_work)], parent_project_id=parent["project_id"])
+    paths = []
+    for kind in ("memory", "skill", "source", "task", "session"):
+        path = f"项目/主项目/{kind}.md"
+        vault.write(path, {"kind": kind, "title": kind, "project": parent["project_id"]}, "inheritmarker")
+        if kind in {"memory", "skill", "source"}:
+            paths.append(path)
+    vault.save_memory("public", "inheritmarker")
+    inherited = service.search("inheritmarker", child["project_id"])["results"]
+    assert {row["path"] for row in inherited} == set(paths)
+    assert all(row["project"] == parent["project_id"] for row in inherited)
+    assert all(row["project"] == parent["project_id"] for row in service.search("inheritmarker", parent["project_id"])["results"])
+    metadata, _ = vault.read(vault.root / paths[0])
+    vault.write(paths[0], metadata, "updatedparentmarker")
+    assert service.search("updatedparentmarker", child["project_id"])["results"][0]["path"] == paths[0]
+    assert len(service.search("inheritmarker", child["project_id"])["results"]) == 2
+
+
 def test_detect_mode_routes_prose_and_code():
     assert detect_mode("修复登录接口的超时问题") == "text"
     assert detect_mode("how does search work") == "text"
@@ -53,6 +80,24 @@ def test_index_stores_token_estimates(tmp_path):
     with vault.connect() as con:
         row = con.execute("SELECT tokens FROM file_state WHERE path=?", (saved["path"],)).fetchone()
     assert row["tokens"] == estimate_tokens("12345678")
+
+
+def test_source_wikilinks_do_not_enter_search_body_or_token_counts(tmp_path):
+    vault = make_vault(tmp_path)
+    source = vault.write("资料/linkonlymarker.md", {"kind": "source", "title": "独立来源"}, "原始事实")
+    saved = vault.save_memory("结论", "bodymarker", sources=[source["path"]])
+    path = vault.root / saved["path"]
+    raw = path.read_text(encoding="utf-8")
+    assert "[[资料/linkonlymarker]]" in raw
+    metadata, body = vault.read(path)
+    assert body == "bodymarker\n" and metadata["sources"] == [source["path"]]
+    vault.write(saved["path"], metadata, body)
+    assert path.read_text(encoding="utf-8").count("<!-- shared-brain:sources -->") == 1
+    assert [item["path"] for item in vault.search("linkonlymarker")] == [source["path"]]
+    with vault.connect() as con:
+        row = con.execute("SELECT n.body,f.tokens FROM notes n JOIN file_state f ON f.path=n.path WHERE n.path=?",
+                          (saved["path"],)).fetchone()
+    assert row["body"] == body and row["tokens"] == estimate_tokens(body)
 
 
 def test_refresh_skips_unchanged_files(tmp_path, monkeypatch):

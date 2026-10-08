@@ -15,6 +15,9 @@ from uuid import uuid4
 import yaml
 
 
+SOURCE_LINKS_MARKER = "\n<!-- shared-brain:sources -->\n"
+
+
 def fingerprint(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -142,7 +145,10 @@ class Vault:
             raise ValueError(f"笔记属性格式错误：{path.name}") from exc
         if not isinstance(metadata, dict):
             raise ValueError(f"笔记属性须为键值表：{path.name}")
-        return metadata, parts[1].lstrip("\n")
+        body = parts[1].lstrip("\n")
+        if SOURCE_LINKS_MARKER in body:
+            body = body.split(SOURCE_LINKS_MARKER, 1)[0].rstrip() + "\n"
+        return metadata, body
 
     def write(self, relative: str, metadata: dict, body: str) -> dict:
         path = self.root / relative
@@ -159,7 +165,15 @@ class Vault:
         timestamp = now()
         metadata = dict(metadata, shared_brain=True, updated=timestamp)
         metadata.setdefault("created", timestamp)
-        text = "---\n" + yaml.safe_dump(metadata, allow_unicode=True, sort_keys=False) + "---\n\n" + body.rstrip() + "\n"
+        body = body.split(SOURCE_LINKS_MARKER, 1)[0].rstrip() + "\n"
+        links = []
+        for source in dict.fromkeys(metadata.get("sources", [])):
+            target = (self.root / source).resolve()
+            if target.is_relative_to(self.root) and target.suffix.lower() == ".md" and target.is_file():
+                links.append("- [[" + target.relative_to(self.root).with_suffix("").as_posix() + "]]")
+        if links:
+            body += SOURCE_LINKS_MARKER + "## 来源\n\n" + "\n".join(links) + "\n"
+        text = "---\n" + yaml.safe_dump(metadata, allow_unicode=True, sort_keys=False) + "---\n\n" + body
         path.write_text(text, encoding="utf-8")
         return {"path": path.relative_to(self.path).as_posix(), "title": metadata["title"]}
 
@@ -221,6 +235,7 @@ class Vault:
     def configured_projects(self):
         paths = self.state("project_paths") or {}
         return [{"project_id": p["project_id"], "name": p["title"],
+                 "parent_project_id": p.get("parent_project_id", ""),
                  "paths": paths.get(p["project_id"], []),
                  "directory": str(self.root / Path(p["path"]).parent)} for p in self.projects()]
 
@@ -233,6 +248,8 @@ class Vault:
         info = self.project(project_id)
         if not info:
             raise ValueError("项目不存在")
+        if any(p.get("parent_project_id") == project_id for p in self.projects()):
+            raise ValueError("请先处理子项目，再删除根项目")
         card = self.root / info["path"]
         archive = card.with_name("立项归档.md")
         if archive.exists():
@@ -243,7 +260,7 @@ class Vault:
         self.state("project_paths", mapping)
         self.refresh()
 
-    def configure_project(self, name: str, paths: list[str], project_id: str = ""):
+    def configure_project(self, name: str, paths: list[str], project_id: str = "", parent_project_id: str = ""):
         if not isinstance(name, str) or not name.strip() or len(name) > 100 or re.search(r'[<>:"/\\|?*]', name) or name.rstrip(" .") != name or name in {".", ".."} or Path(name).is_reserved():
             raise ValueError("请提供有效的项目文件夹名称")
         if name == "独立项目":
@@ -255,6 +272,12 @@ class Vault:
         info = self.project(project_id) if project_id else None
         if project_id and not info:
             raise ValueError("项目不存在")
+        if parent_project_id:
+            parent = self.project(parent_project_id)
+            if not parent or parent.get("parent_project_id") or parent_project_id == project_id:
+                raise ValueError("子项目只能属于一个根项目")
+            if project_id and any(p.get("parent_project_id") == project_id for p in self.projects()):
+                raise ValueError("已有子项目的根项目不能改为子项目")
         previous = mapping.get(project_id, [])
         for path in normalized:
             if path not in previous and not Path(path).is_dir():
@@ -262,14 +285,14 @@ class Vault:
         for item in self.configured_projects():
             if item["project_id"] == project_id:
                 continue
-            if item["name"] == name:
+            if item["name"] == name and item["parent_project_id"] == parent_project_id:
                 raise ValueError("项目名称已存在")
             if set(normalized) & set(item["paths"]):
                 raise ValueError("文件夹已属于项目：" + item["name"])
         if not info:
             if not normalized:
                 raise ValueError("新增项目至少选择一个文件夹")
-            directory = self.root / "项目" / name
+            directory = self.root / "项目" / (name + "-" + uuid4().hex[:8] if parent_project_id else name)
             archive = directory / "立项归档.md"
             card = directory / "项目.md"
             if archive.is_file() and not card.exists():
@@ -282,17 +305,163 @@ class Vault:
                 raise ValueError("项目文件夹已存在，请关联已有项目")
         if not info:
             project_id = uuid4().hex
-            self.write(f"项目/{name}/项目.md", {"kind": "project", "title": name, "project": project_id,
-                       "project_id": project_id, "status": "active", "goal": "", "next_actions": []}, "尚未保存进度。")
-            self.write(f"项目/{name}/会话索引.md", {"kind": "index", "title": "会话索引", "project": project_id}, "")
+            relative = directory.relative_to(self.root).as_posix()
+            self.write(f"{relative}/项目.md", {"kind": "project", "title": name, "project": project_id,
+                       "project_id": project_id, "parent_project_id": parent_project_id,
+                       "status": "active", "goal": "", "next_actions": []}, "尚未保存进度。")
+            self.write(f"{relative}/会话索引.md", {"kind": "index", "title": "会话索引", "project": project_id}, "")
         else:
             metadata, body = self.read(self.root / info["path"])
-            self.write(info["path"], {**metadata, "title": name}, body)
+            self.write(info["path"], {**metadata, "title": name, "parent_project_id": parent_project_id}, body)
         mapping[project_id] = normalized
         self.state("project_paths", mapping)
         (self.root / "草稿" / self.group(project_id)).mkdir(parents=True, exist_ok=True)
         self.refresh()
         return next(p for p in self.configured_projects() if p["project_id"] == project_id)
+
+    def project_changes(self, project_id: str):
+        info = self.project(project_id)
+        if not info:
+            raise ValueError("项目不存在")
+        self.refresh()
+        with self.connect() as con:
+            rows = con.execute("SELECT path,title,kind,metadata,body FROM notes WHERE project=? "
+                               "AND kind IN ('memory','skill','source','decision','task','session') "
+                               "AND coalesce(json_extract(metadata,'$.merged_into'),'')='' "
+                               "AND coalesce(json_extract(metadata,'$.feedback_pending'),0)!=1 ORDER BY kind,path",
+                               (project_id,)).fetchall()
+        items = [{"id": row["path"], "path": row["path"], "kind": row["kind"], "title": row["title"],
+                  "text": row["body"], "metadata": json.loads(row["metadata"])} for row in rows]
+        if info.get("progress") or info.get("next_actions"):
+            items.insert(0, {"id": "progress", "path": info["path"], "kind": "progress", "title": "项目进度",
+                             "text": info.get("progress", ""),
+                             "metadata": {"next_actions": info.get("next_actions", []), "goal": info.get("goal", "")}})
+        return {"project_id": project_id, "parent_project_id": info.get("parent_project_id", ""), "items": items}
+
+    def create_commit(self, project_id: str, item_ids: list[str], message: str = ""):
+        changes = self.project_changes(project_id)
+        if not changes["parent_project_id"]:
+            raise ValueError("请选择要提交成果的子项目")
+        available = {item["id"]: item for item in changes["items"]}
+        if not isinstance(item_ids, list) or not item_ids or any(not isinstance(i, str) or i not in available for i in item_ids):
+            raise ValueError("请选择本子项目中的成果")
+        if not isinstance(message, str) or len(message) > 200:
+            raise ValueError("提交说明最多 200 字符")
+        commit_id = uuid4().hex
+        info = self.project(project_id)
+        relative = (Path(info["path"]).parent / "提交" / (commit_id + ".md")).as_posix()
+        items = [available[i] for i in dict.fromkeys(item_ids)]
+        self.write(relative, {"kind": "commit", "title": message.strip() or "子项目成果", "id": commit_id,
+                              "project": project_id, "project_id": project_id,
+                              "parent_project_id": changes["parent_project_id"], "status": "submitted", "items": items},
+                   "\n".join("- " + item["title"] for item in items))
+        return self.project_commit(project_id, commit_id)
+
+    def project_commits(self, project_id: str):
+        info = self.project(project_id)
+        if not info:
+            raise ValueError("项目不存在")
+        result = []
+        for path in (self.root / Path(info["path"]).parent / "提交").glob("*.md"):
+            metadata, _ = self.read(path)
+            if metadata.get("kind") == "commit":
+                result.append({**metadata, "path": path.relative_to(self.root).as_posix()})
+        return sorted(result, key=lambda item: item["created"], reverse=True)
+
+    def project_commit(self, project_id: str, commit_id: str):
+        commit = next((item for item in self.project_commits(project_id) if item["id"] == commit_id), None)
+        if not commit:
+            raise ValueError("提交不存在")
+        parent = self.project(commit["parent_project_id"])
+        if not parent:
+            raise ValueError("父项目不存在")
+        self.refresh()
+        with self.connect() as con:
+            existing = [{"path": row["path"], "title": row["title"], "kind": row["kind"],
+                         "text": row["body"], "metadata": json.loads(row["metadata"])} for row in
+                        con.execute("SELECT path,title,kind,body,metadata FROM notes WHERE project=?",
+                                    (parent["project_id"],))]
+        conflicts = []
+        for item in commit["items"]:
+            if item["kind"] == "progress":
+                continue
+            if item["kind"] == "session":
+                filename = fingerprint("session:" + item["path"])[:20] + ".md"
+                item["target_path"] = (Path(parent["path"]).parent / "成果" / filename).as_posix()
+                same = next((old for old in existing if old["path"] == item["target_path"]), None)
+            else:
+                same = next((old for old in existing if old["kind"] == item["kind"] and
+                         (old["metadata"].get("task_id") == item["metadata"].get("task_id") if item["kind"] == "task"
+                          else old["title"].casefold() == item["title"].casefold())), None)
+            if same:
+                item["target_path"] = same["path"]
+                fields = {"conditions": ("适用条件", {}), "evidence": ("验证依据", ""), "verified": ("已验证", False),
+                          "next_actions": ("下一步", []), "goal": ("目标", ""), "conflict": ("存在冲突", False),
+                          "feedback_pending": ("待复核", False), "merged_into": ("合并到", "")}
+                differences = [key for key, (_, default) in fields.items()
+                               if same["metadata"].get(key, default) != item["metadata"].get(key, default)]
+                if same["text"] != item["text"] or differences:
+                    texts = []
+                    for text, metadata in ((same["text"], same["metadata"]), (item["text"], item["metadata"])):
+                        details = [fields[key][0] + "：" + json.dumps(metadata.get(key, fields[key][1]), ensure_ascii=False)
+                                   for key in differences]
+                        texts.append(text + ("\n\n属性差异\n" + "\n".join(details) if details else ""))
+                    conflicts.append({"id": item["id"], "title": item["title"], "kind": item["kind"],
+                                      "parent_text": texts[0], "submitted_text": texts[1]})
+            elif item["kind"] != "session":
+                identity = fingerprint(parent["project_id"] + "\n" + item["title"].strip().casefold())[:20]
+                if item["kind"] == "skill":
+                    item["target_path"] = f"技能/{self.group(parent['project_id'])}/{identity}/SKILL.md"
+                else:
+                    folder = {"memory": "知识", "source": "资料", "decision": "决策", "task": "任务"}[item["kind"]]
+                    filename = Path(item["path"]).name if item["kind"] == "task" else identity + ".md"
+                    item["target_path"] = (Path(parent["path"]).parent / folder / filename).as_posix()
+        return {**commit, "conflicts": conflicts}
+
+    def merge_commit(self, project_id: str, commit_id: str, resolutions: dict | None = None):
+        commit = self.project_commit(project_id, commit_id)
+        if commit["status"] == "merged":
+            raise ValueError("此提交已合并")
+        choices = resolutions or {}
+        if not isinstance(choices, dict) or any(value not in {"keep_parent", "use_commit"} for value in choices.values()):
+            raise ValueError("请选择保留父项目或采用提交内容")
+        unresolved = [item for item in commit["conflicts"] if item["id"] not in choices]
+        if unresolved:
+            return {"merged": False, "conflicts": unresolved, "kept": [], "applied": [], "commit": commit}
+        parent = self.project(commit["parent_project_id"])
+        child = self.project(project_id)
+        kept, applied = [], []
+        for item in commit["items"]:
+            if choices.get(item["id"]) == "keep_parent":
+                kept.append(item["id"])
+                continue
+            if item["kind"] == "session":
+                self._index_session(parent["project_id"], item["metadata"]["session_id"], item["path"], item["title"])
+                self.write(item["target_path"], {"kind": "source", "title": item["title"], "project": parent["project_id"],
+                           "source_kind": "session", "sources": [item["path"], commit["path"]]}, item["text"])
+            elif item["kind"] == "progress":
+                metadata, body = self.read(self.root / parent["path"])
+                addition = f"### {child['title']} · {commit['title']}\n{item['text']}"
+                metadata["progress"] = "\n\n".join(filter(None, (metadata.get("progress", ""), addition)))
+                metadata["next_actions"] = list(dict.fromkeys(metadata.get("next_actions", []) + item["metadata"].get("next_actions", [])))
+                metadata["sources"] = list(dict.fromkeys(metadata.get("sources", []) + [commit["path"]]))
+                self.write(parent["path"], metadata, body)
+            else:
+                metadata = {k: v for k, v in item["metadata"].items() if k not in {"created", "updated", "project"}}
+                previous = self.read(self.root / item["target_path"])[0] if (self.root / item["target_path"]).exists() else {}
+                metadata.update(project=parent["project_id"], sources=list(dict.fromkeys(
+                    previous.get("sources", []) + metadata.get("sources", []) + [item["path"], commit["path"]])))
+                if previous.get("feedback_pending"):
+                    metadata["feedback_pending"] = True
+                if item["kind"] == "skill":
+                    metadata["name"] = Path(item["target_path"]).parent.name
+                self.write(item["target_path"], metadata, item["text"])
+            applied.append(item["id"])
+        metadata, body = self.read(self.root / commit["path"])
+        self.write(commit["path"], {**metadata, "status": "merged", "merged_at": now(), "resolutions": choices}, body)
+        self.refresh()
+        return {"merged": True, "conflicts": [], "kept": kept, "applied": applied,
+                "commit": self.project_commit(project_id, commit_id)}
 
     def save_task(self, task_id: str, project: str, goal: str, progress: str, next_actions: list[str]):
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", task_id):
@@ -316,14 +485,16 @@ class Vault:
                            "agent": agent, "project": project}, summary)
         self.state(key, relative)
         if project:
-            info = self.project(project)
-            index = Path(info["path"]).parent / "会话索引.md"
-            metadata, _ = self.read(self.root / index)
-            entries = metadata.get("entries", {})
-            entries[session_id] = {"path": relative, "title": title or "会话总结", "date": now()[:10]}
-            body = "\n".join(f"- {e['date']} [{e['title'].replace('[', '').replace(']', '')}]({Path(os.path.relpath(self.root / e['path'], self.root / index.parent)).as_posix().replace(' ', '%20')})" for e in entries.values())
-            self.write(index.as_posix(), {**metadata, "entries": entries}, body)
+            self._index_session(project, session_id, relative, title or "会话总结")
         return saved
+
+    def _index_session(self, project, session_id, relative, title):
+        index = Path(self.project(project)["path"]).parent / "会话索引.md"
+        metadata, _ = self.read(self.root / index)
+        entries = metadata.get("entries", {})
+        entries[session_id] = {"path": relative, "title": title, "date": now()[:10]}
+        body = "\n".join(f"- {e['date']} [{e['title'].replace('[', '').replace(']', '')}]({Path(os.path.relpath(self.root / e['path'], self.root / index.parent)).as_posix().replace(' ', '%20')})" for e in entries.values())
+        self.write(index.as_posix(), {**metadata, "entries": entries}, body)
 
     def save_memory(self, title: str, body: str, project: str = "", verified: bool = False,
                     evidence: str = "", sources: list[str] | None = None, generated: bool = False, kind: str = "memory", conflict: bool = False, conditions: dict | None = None,
@@ -542,8 +713,13 @@ class Vault:
         chinese = bool(CJK_RE.search(query))
         minimum = 2 if chinese and len(terms) >= 3 else 1
         self.refresh()
-        scope = "" if project in {"", "all"} else " AND n.project=?"
-        parameters = [] if not scope else ["" if project == "independent" else project]
+        scope, parameters = "", []
+        if project not in {"", "all"}:
+            project_scope = "" if project == "independent" else project
+            scope = (" AND (n.project=? OR (n.kind IN ('memory','skill','source') AND n.project="
+                     "(SELECT nullif(json_extract(metadata,'$.parent_project_id'),'') FROM notes "
+                     "WHERE kind='project' AND project=?)))")
+            parameters = [project_scope, project_scope]
         if kinds:
             scope += " AND n.kind IN (" + ",".join("?" for _ in kinds) + ")"
             parameters += list(kinds)
@@ -565,6 +741,7 @@ class Vault:
             expression = " OR ".join('"' + term.replace('"', '""') + '"' for term in terms)
             sql += " JOIN search ON search.path=n.path AND search MATCH ?"
         sql += (" WHERE coverage>=?"
+                " AND n.kind!='commit'"
                 " AND coalesce(json_extract(n.metadata,'$.feedback_pending'),0)!=1"
                 " AND coalesce(json_extract(n.metadata,'$.merged_into'),'')=''" + scope +
                 " ORDER BY score DESC,coverage DESC,n.verified DESC,(n.kind='memory') DESC,"
