@@ -66,7 +66,22 @@ internal static class Program
         tray.ContextMenuStrip.Items.Add("显示 Shared Brain", null, (_, _) => Show());
         var quitting = false;
         var usesBackdrop = false;
+        var resumePending = false;
         void Quit() { quitting = true; app.Shutdown(); }
+        void RestoreBrowser()
+        {
+            if (!resumePending || !window.IsVisible || window.WindowState == WindowState.Minimized) return;
+            resumePending = false;
+            var cloaked = 1;
+            DwmSetWindowAttribute(new WindowInteropHelper(window).Handle, 13, ref cloaked, 4);
+            // Recreate the graphics capture surface after sleep/hibernation.
+            browser.Dispose();
+            browser = new WebView2CompositionControl { AllowExternalDrop = false };
+            window.ContentRendered += InitializeBrowser;
+            window.Content = browser;
+            ApplyTheme(Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1) is int mode && mode == 0);
+        }
+        window.Activated += (_, _) => RestoreBrowser();
         void ApplyTheme(bool dark)
         {
             var color = dark ? Color.FromRgb(20, 24, 32) : Color.FromRgb(241, 246, 253);
@@ -88,6 +103,12 @@ internal static class Program
             HwndSource.FromHwnd(handle).AddHook((nint hwnd, int message, nint wParam, nint lParam, ref bool handled) =>
             {
                 if (message == 0x18 && wParam != 0 && window.Visibility != Visibility.Visible) window.Show();
+                if (message == 0x218 && wParam == 0x12) // PBT_APMRESUMEAUTOMATIC
+                {
+                    resumePending = true;
+                    if (window.IsVisible && window.WindowState != WindowState.Minimized)
+                        app.Dispatcher.BeginInvoke(new Action(RestoreBrowser));
+                }
                 return 0;
             });
             var cloaked = 1;
@@ -108,7 +129,17 @@ internal static class Program
             }
             ApplyTheme(Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1) is int mode && mode == 0);
         };
-        window.StateChanged += (_, _) => browser.Visibility = window.WindowState == WindowState.Minimized ? Visibility.Collapsed : Visibility.Visible;
+        window.StateChanged += (_, _) =>
+        {
+            browser.Visibility = window.WindowState == WindowState.Minimized ? Visibility.Collapsed : Visibility.Visible;
+            RestoreBrowser();
+        };
+        _ = Task.Run(async () =>
+        {
+            while (await input.ReadLineAsync() is { } line)
+                await app.Dispatcher.InvokeAsync(() => browser.CoreWebView2?.PostWebMessageAsJson(line));
+            await app.Dispatcher.InvokeAsync(Quit);
+        });
         window.ContentRendered += InitializeBrowser;
         async void InitializeBrowser(object? sender, EventArgs e)
         {
@@ -152,7 +183,7 @@ internal static class Program
                 }
                 if (value.GetProperty("method").GetString() == "choose_vault")
                 {
-                    var requestId = value.GetProperty("id").GetInt32();
+                    var requestId = value.GetProperty("id").GetString();
                     // Native modal UI must open after the WebView2 event handler returns.
                     app.Dispatcher.BeginInvoke(new Action(() =>
                     {
@@ -163,14 +194,10 @@ internal static class Program
                 }
                 else output.WriteLine(e.WebMessageAsJson);
             };
-            _ = Task.Run(async () =>
+            browser.CoreWebView2.NavigationCompleted += async (_, _) =>
             {
-                while (await input.ReadLineAsync() is { } line)
-                    await app.Dispatcher.InvokeAsync(() => browser.CoreWebView2.PostWebMessageAsJson(line));
-                await app.Dispatcher.InvokeAsync(Quit);
-            });
-            browser.CoreWebView2.NavigationCompleted += (_, _) =>
-            {
+                // Navigation can finish before the composition surface has its first frame.
+                await browser.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, Stream.Null);
                 var cloaked = 0;
                 DwmSetWindowAttribute(new WindowInteropHelper(window).Handle, 13, ref cloaked, 4);
                 window.Activate();

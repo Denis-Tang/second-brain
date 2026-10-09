@@ -16,7 +16,11 @@ Shared Brain 是给个人开发者准备的轻量本地记忆工具。完成 MCP
 - 配置简单并且使用外部mcp工具，避免因为agent版本更新而失效
 
 
-**当前源码版本：0.5.0。** 下载版本与更新说明以 [GitHub Releases](https://github.com/Denis-Tang/second-brain/releases/latest) 为准；源码中的新增功能不代表已有安装包已包含。
+**当前源码版本：0.5.1。** 下载版本与更新说明以 [GitHub Releases](https://github.com/Denis-Tang/second-brain/releases/latest) 为准；源码中的新增功能不代表已有安装包已包含。
+
+0.5.1 恢复桌面首帧绘制等待：WebView2 完成首帧捕获后才显示亚克力窗口，避免 0.5.0 导航完成后过早露出空白玻璃。原生窗口测试检查首次启动、再次启动及最小化恢复后的实际像素。
+
+系统从睡眠或休眠恢复后，程序会重建网页显示控件；窗口最小化或藏在托盘时，延后到再次打开时重建。后端及已保存配置保留，页面会重新加载，未保存的表单内容需要重新填写。
 
 [预览](#preview--demo) · [快速开始](#quick-start) · [使用方式](#usage) · [工作原理](#how-it-works) · [项目边界](#项目边界与局限) · [开发与测试](#development) · [常见问题](#faq--troubleshooting)
 

@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<9"]
+dev = ["pytest>=8,<9", "Pillow>=11.2.1,<13"]
 build = ["pyinstaller>=6,<7"]
 
 [project.scripts]

@@ -118,6 +118,38 @@ def wait_for(check):
     pytest.fail("Native desktop did not reach the expected state within 15 seconds")
 
 
+def test_native_first_frame_and_restore_have_rendered_pixels(tmp_path, native):
+    from PIL import ImageGrab
+
+    (native.assets / "index.html").write_text('''<!doctype html>
+<style>html,body{margin:0;width:100%;height:100%;background:#e02060}
+div{position:absolute;left:50%;width:50%;height:100%;background:#20d080}</style><div></div>''',
+                                            encoding="utf-8")
+    profile = tmp_path / "render-profile"
+    for _ in range(2):  # Fresh profile, then the same profile after a normal exit.
+        with native.launch(profile) as process:
+            handle = wait_for(lambda: native.window(process.pid, "Shared Brain"))
+            wait_for(lambda: native.attribute(handle, 14) == 0)
+
+            def painted():
+                frame = ImageGrab.grab(window=handle)
+                left = frame.getpixel((frame.width // 4, frame.height // 2))[:3]
+                right = frame.getpixel((frame.width * 3 // 4, frame.height // 2))[:3]
+                return all(abs(a - b) < 12 for actual, expected in
+                           ((left, (224, 32, 96)), (right, (32, 208, 128)))
+                           for a, b in zip(actual, expected))
+
+            wait_for(painted)
+            for _ in range(3):
+                native.user.ShowWindow(handle, 6)
+                wait_for(lambda: native.user.IsIconic(handle))
+                native.user.ShowWindow(handle, 9)
+                wait_for(lambda: not native.user.IsIconic(handle))
+                wait_for(painted)
+            process.stdin.close()
+            assert process.wait(timeout=10) == 0
+
+
 @pytest.mark.parametrize("failure", ["profile-file", "browser-data-file", "missing-runtime"])
 def test_native_startup_error_returns_without_edge_dialog(tmp_path, native, failure):
     profile = tmp_path / "界面数据"
@@ -138,6 +170,64 @@ def test_native_startup_error_returns_without_edge_dialog(tmp_path, native, fail
         assert process.wait(timeout=10) == 1
     if failure != "missing-runtime":
         assert sentinel.read_text(encoding="utf-8") == "preserve existing data"
+
+
+@pytest.mark.parametrize("minimized", [False, True])
+def test_native_resume_recreates_page_and_ignores_old_reply(tmp_path, native, minimized):
+    from PIL import ImageGrab
+
+    (native.assets / "index.html").write_text('''<!doctype html>
+<style>html,body{margin:0;width:100%;height:100%;background:#e02060}</style>
+<div class="titlebar">Resume test</div><script src="bridge.js"></script><script>
+window.addEventListener('desktopready', async () => {
+  const count = Number(localStorage.getItem('resume-count') || 0) + 1;
+  localStorage.setItem('resume-count', count);
+  const reply = await desktop.checkpoint(count);
+  if (reply !== count) throw Error('reply belongs to a previous page');
+  document.body.style.background = '#20d080';
+  await desktop.checkpoint('done');
+});</script>''', encoding="utf-8")
+    with native.launch(tmp_path / "resume-profile") as process:
+        messages = queue.Queue()
+
+        def read_messages():
+            for line in process.stdout:
+                messages.put(json.loads(line))
+
+        reader = threading.Thread(target=read_messages, daemon=True)
+        reader.start()
+        old = messages.get(timeout=15)
+        assert old["args"] == [1]
+        handle = wait_for(lambda: native.window(process.pid, "Shared Brain"))
+        wait_for(lambda: native.attribute(handle, 14) == 0)
+        if minimized:
+            native.user.ShowWindow(handle, 6)
+            wait_for(lambda: native.user.IsIconic(handle))
+        # Deliver the resume notification without suspending the user's computer.
+        assert native.user.PostMessageW(handle, 0x218, 0x12, 0)
+        if minimized:
+            time.sleep(0.2)
+            assert messages.empty()  # Keep the hidden page until taskbar restore.
+            native.user.ShowWindow(handle, 9)
+        current = messages.get(timeout=15)
+        assert current["args"] == [2]
+        assert current["id"] != old["id"]
+        for request, result in ((old, 1), (current, 2)):
+            process.stdin.write(json.dumps({"id": request["id"], "result": result}) + "\n")
+            process.stdin.flush()
+        assert messages.get(timeout=15)["args"] == ["done"]
+        wait_for(lambda: native.attribute(handle, 14) == 0)
+
+        def painted():
+            frame = ImageGrab.grab(window=handle)
+            pixel = frame.getpixel((frame.width // 2, frame.height // 2))[:3]
+            return all(abs(a - b) < 12 for a, b in zip(pixel, (32, 208, 128)))
+
+        wait_for(painted)
+        process.stdin.close()
+        assert process.wait(timeout=10) == 0
+        reader.join(timeout=2)
+        assert not reader.is_alive()
 
 
 def test_native_bridge_theme_window_lifecycle_and_restart(tmp_path, native):

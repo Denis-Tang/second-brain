@@ -1,14 +1,13 @@
 const requests = new Map();
-let requestId = 0;
 window.desktop = new Proxy({}, {
   get: (_, method) => (...args) => new Promise(resolve => {
-    const id = ++requestId;
+    const id = crypto.randomUUID();
     requests.set(id, resolve);
     window.chrome.webview.postMessage({id, method, args});
   })
 });
 window.chrome.webview.addEventListener("message", ({data}) => {
-  requests.get(data.id)(data.result);
+  requests.get(data.id)?.(data.result);
   requests.delete(data.id);
 });
 document.addEventListener("DOMContentLoaded", () => {
